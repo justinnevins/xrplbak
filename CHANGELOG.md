@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Fuzz targets for config parsing, redaction, the container, chunks, the manifest, the anchor, and the AEAD layer, with a committed corpus and a CI smoke job.
+- Fix: an empty stanza header is no longer moved to the bundle. It held no content, and moving it wrote a marker line the original never had, so restore reported a correct backup as changed.
+- Fix: canonical form is now a fixed point. A nameless stanza with no lines wrote a separator that re-parsing could not recover, so the same config hashed two different ways.
+- Fix: a stanza header with a trailing comment, such as `[server] # ports`, now parses as a header. It was read as a value line, which silently moved every following line into the wrong stanza.
+
 ## v1.0.0 (2026-09-15)
 
 - Commands: init, redact, backup, verify, restore.

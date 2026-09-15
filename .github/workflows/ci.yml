@@ -30,6 +30,45 @@ jobs:
           name: binaries
           path: bin/
 
+  # Short fuzz smoke on every push. The targets carry a committed corpus, so
+  # this replays every counterexample found so far and then explores briefly.
+  # Long campaigns run out of band, not here.
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pkg: ./internal/cfg
+            target: FuzzCanonicalIsFixedPoint
+          - pkg: ./internal/redact
+            target: FuzzSplitMergeRoundTrip
+          - pkg: ./internal/redact
+            target: FuzzOnChainIsClean
+          - pkg: ./internal/container
+            target: FuzzPackUnpackRoundTrip
+          - pkg: ./internal/container
+            target: FuzzDecodeNoPanic
+          - pkg: ./internal/chunk
+            target: FuzzEncodeDecodeRoundTrip
+          - pkg: ./internal/crypto
+            target: FuzzBundleRoundTrip
+          - pkg: ./internal/anchor
+            target: FuzzForgedMACIsRejected
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go test ${{ matrix.pkg }} -run '^$' -fuzz '^${{ matrix.target }}$' -fuzztime 40s
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-counterexample-${{ matrix.target }}
+          path: internal/**/testdata/fuzz/**
+
   release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')

@@ -36,6 +36,9 @@ func Parse(text string) *File {
 		if line == "" || (strings.HasPrefix(line, "#") && !strings.HasPrefix(line, MarkerPrefix)) {
 			continue
 		}
+		if idx := strings.Index(line, " #"); idx > 0 {
+			line = strings.TrimSpace(line[:idx])
+		}
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			name := strings.TrimSpace(line[1 : len(line)-1])
 			// A repeated stanza name continues the first one, so split and
@@ -45,9 +48,6 @@ func Parse(text string) *File {
 				f.Stanzas = append(f.Stanzas, cur)
 			}
 			continue
-		}
-		if idx := strings.Index(line, " #"); idx > 0 {
-			line = strings.TrimSpace(line[:idx])
 		}
 		if cur == nil {
 			cur = &Stanza{Name: "", LineNo: i + 1}
@@ -72,7 +72,16 @@ func (f *File) Get(name string) *Stanza {
 // lines in original order, LF endings, one blank line between stanzas.
 // Same stanzas in => same bytes out.
 func (f *File) Canonical() string {
-	stanzas := append([]*Stanza{}, f.Stanzas...)
+	var stanzas []*Stanza
+	for _, s := range f.Stanzas {
+		// A nameless stanza with no lines renders nothing, so keeping it
+		// would emit a separator that re-parsing cannot recover. Dropping
+		// it here is what makes canonical form a fixed point.
+		if s.Name == "" && len(s.Lines) == 0 {
+			continue
+		}
+		stanzas = append(stanzas, s)
+	}
 	sort.SliceStable(stanzas, func(i, j int) bool { return stanzas[i].Name < stanzas[j].Name })
 	var b strings.Builder
 	for i, s := range stanzas {

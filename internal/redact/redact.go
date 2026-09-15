@@ -159,6 +159,13 @@ func Split(f *cfg.File) (*Result, error) {
 		if s.Name == "validator_token" {
 			res.Role = "validator"
 		}
+		if len(s.Lines) == 0 {
+			// A stanza header with nothing under it holds no content to
+			// protect. Moving it would write a marker the original never
+			// had, so restore would report a correct backup as changed.
+			res.OnChain.Stanzas = append(res.OnChain.Stanzas, &cfg.Stanza{Name: s.Name})
+			continue
+		}
 		switch {
 		case bundleStanzas[s.Name]:
 			res.moveStanza(s, "bundle-only stanza")
