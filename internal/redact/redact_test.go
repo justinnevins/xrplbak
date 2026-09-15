@@ -176,3 +176,34 @@ func TestHostValue(t *testing.T) {
 		}
 	}
 }
+
+// TestEmptyStanzaRoundTrips pins the first defect the fuzz targets found.
+// An ordinary empty stanza header used to be "moved" to the bundle with no
+// content, which put a marker line into the restored file that the original
+// never had. Restore then reported a correct backup as changed.
+func TestEmptyStanzaRoundTrips(t *testing.T) {
+	for _, text := range []string{
+		"[cluster_nodes]\n",
+		"[ips_fixed]\n",
+		"[mystery]\n[node_size]\nhuge\n",
+		"[]\n[node_size]\nhuge\n",
+	} {
+		orig := cfg.Parse(text)
+		res, err := Split(orig)
+		if err != nil {
+			t.Fatalf("%q: %v", text, err)
+		}
+		if strings.Contains(res.OnChain.Canonical(), MovedMarker) {
+			t.Fatalf("%q: an empty stanza produced a marker:\n%s", text, res.OnChain.Canonical())
+		}
+		for _, m := range res.Moves {
+			if m.Lines == 0 {
+				t.Fatalf("%q: reported a move of 0 lines for stanza %q", text, m.Stanza)
+			}
+		}
+		merged := Merge(cfg.Parse(res.OnChain.Canonical()), cfg.Parse(res.Bundle.Canonical()))
+		if merged.Canonical() != orig.Canonical() {
+			t.Fatalf("%q: round trip mismatch:\nwant %q\ngot  %q", text, orig.Canonical(), merged.Canonical())
+		}
+	}
+}
