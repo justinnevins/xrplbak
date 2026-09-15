@@ -85,6 +85,10 @@ Fund the writer account with at least 1.5 XRP: 1 XRP base reserve, 0.2 XRP DID r
 8. Start xrpld. Confirm `server_info` shows the expected `pubkey_validator`.
 9. Run `xrplbak init` on the new host only if the key file is gone, then take a fresh backup.
 
+## Tested
+
+Unit tests cover redaction refusals, chunk sizing, reassembly, truncated history, wrong key, rollback, tombstones, resume, and the HTTP client against a fake ledger. The full flow ran on XRPL Testnet on 2026-09-15 (backup, second backup superseding the first, verify, restore from server, restore from the dump file, `--write`).
+
 ## MainNet vs future amendments
 
 v1 uses AccountSet, DIDSet, DIDDelete, account_tx, tx, and ledger_entry. All are live on MainNet (DID since 2024-10-30). Batch (BatchV1_1), DynamicMPT, and Sponsor are not enabled and are not used. MPT metadata was evaluated and rejected: 1024 immutable bytes with token semantics lose to DID's 256 mutable bytes. See [docs/mainnet-assumptions.md](docs/mainnet-assumptions.md).

@@ -146,7 +146,7 @@ func Build(o Options) (*Plan, error) {
 		return nil, fmt.Errorf("on-chain config needs %d chunks; the limit is %d (%d bytes). Move large stanzas to the bundle with --bundle-stanza, or shorten the config", len(pieces), chunk.MaxChunks, chunk.MaxChunks*container.BlockLen)
 	}
 
-	id := crypto.BackupID(append(append([]byte{}, onPacked...), bundlePacked...), o.Key.Epoch, o.Seq)
+	id := o.Key.Key.BackupID(append(append([]byte{}, onPacked...), bundlePacked...), o.Key.Epoch, o.Seq)
 	kb := o.Key.Key.BackupKey(id)
 	kbundle := o.Key.Key.BundleKey(id)
 
@@ -261,9 +261,8 @@ type Submitter struct {
 // so an interrupted run can be resumed.
 func (s *Submitter) Submit(p *Plan) error {
 	s.defaults()
-	account := s.Writer.Address()
-	if s.Dump == nil {
-		s.Dump = &dump.Dump{Account: account, BackupID: p.Manifest.BackupID}
+	if s.Dump.BackupID == "" {
+		s.Dump.BackupID = p.Manifest.BackupID
 	}
 	// Resume: match chunk ciphertext hashes to already-recorded transactions.
 	recorded := map[string]dump.Tx{}

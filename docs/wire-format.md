@@ -10,7 +10,7 @@ K_e      = HKDF-SHA256(RRK,  Salt, "epoch"  || u32 epoch)
 K_b      = HKDF-SHA256(K_e,  Salt, "backup" || backup_id)
 K_bundle = HKDF-SHA256(K_e,  Salt, "bundle" || backup_id)
 K_anchor = HKDF-SHA256(K_e,  Salt, "anchor")
-backup_id = SHA-256(onchain_packed || bundle_packed || u32 epoch || u32 seq)[0:16]
+backup_id = HMAC-SHA256(K_e, onchain_packed || bundle_packed || u32 epoch || u32 seq)[0:16]
 ```
 
 RRK is 32 random bytes shown as 24 BIP39 words or split with Shamir over GF(2^8) (33-byte shares, 2-byte SHA-256 checksum, Crockford base32 in groups of 7).

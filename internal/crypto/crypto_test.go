@@ -70,7 +70,7 @@ func TestDerivationDeterministic(t *testing.T) {
 	if a != b || a == c {
 		t.Fatal("epoch derivation")
 	}
-	id := BackupID([]byte("x"), 0, 1)
+	id := a.BackupID([]byte("x"), 0, 1)
 	if a.BackupKey(id) != b.BackupKey(id) || a.BackupKey(id) == a.BundleKey(id) {
 		t.Fatal("backup key derivation")
 	}
@@ -85,7 +85,7 @@ const knownEpoch0 = "7559b98f543d540f7973a84d3c2fca670f550fc1316f1f0e8bc8e9c31e0
 func TestChunkAEAD(t *testing.T) {
 	r := fixedRoot()
 	e := r.DeriveEpochKey(0)
-	id := BackupID([]byte("plain"), 0, 1)
+	id := e.BackupID([]byte("plain"), 0, 1)
 	k := e.BackupKey(id)
 	plain := bytes.Repeat([]byte{7}, 960)
 	ct := SealChunk(k, id, 2, 5, plain)
@@ -114,7 +114,7 @@ func TestChunkAEAD(t *testing.T) {
 func TestBundleStream(t *testing.T) {
 	r := fixedRoot()
 	e := r.DeriveEpochKey(0)
-	id := BackupID([]byte("plain"), 0, 1)
+	id := e.BackupID([]byte("plain"), 0, 1)
 	k := e.BundleKey(id)
 	plain := bytes.Repeat([]byte{9}, FrameLen*2+100)
 	ct := SealBundle(k, id, plain)
