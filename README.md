@@ -48,6 +48,8 @@ sha256sum bin/*
 
 Go 1.24 or newer. `make build` is `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -buildid="`, so two people on two machines get the same bytes.
 
+Build from a git clone with the tag checked out, not from a source zip or tarball. Go stamps the commit hash and the module version into the binary, so a tree without `.git` produces different bytes and will not match the published checksums. v1.0.0 was reproduced this way on a second machine, byte for byte.
+
 ## Optional binary + checksum verification
 
 Prefer building from the tagged commit. Published binaries are a convenience. Compare SHA256. If hashes do not match, do not use the binary.
