@@ -547,6 +547,24 @@ func TestAdversarialCorpus(t *testing.T) {
 			setup: func(w *world) []string { return w.hostilePaths("/etc/xrpld/.") },
 			code:  exitRefused, msg: "unsafe path",
 		},
+		{
+			// A path carrying a newline forges a second line in the dry-run
+			// completeness listing, so a file that was never recovered can be
+			// made to read as complete.
+			name: "newline in manifest files[].path",
+			setup: func(w *world) []string {
+				return w.hostileSealedPath("/etc/xrpld.cfg\n  /etc/shadow                              complete")
+			},
+			code: exitRefused, msg: "unsafe path",
+		},
+		{
+			// A cursor-control escape rewrites the line already printed.
+			name: "terminal escape in manifest files[].path",
+			setup: func(w *world) []string {
+				return w.hostileSealedPath("/etc/\x1b[2K\x1b[Gxrpld.cfg")
+			},
+			code: exitRefused, msg: "unsafe path",
+		},
 
 		// ---- dump file -------------------------------------------------------------
 		{
@@ -742,6 +760,34 @@ func (w *world) hostilePaths(path string) []string {
 	w.ledger.Fund(w.writer.Address(), 5_000_000)
 	raw, _ := os.ReadFile(w.cfgPath)
 	p := w.resealOnChain([]container.Entry{{Path: path, Mode: 0o600, Data: raw}})
+	w.plan = p
+	w.submit(p)
+	must(w.t, os.WriteFile(w.bundle, p.Bundle, 0o600))
+	return nil
+}
+
+// hostileSealedPath reseals both the on-chain container and the bundle at
+// the same hostile path and rewrites the manifest to list only it, so the
+// only guard left standing is checkPath. hostilePaths leaves the bundle at
+// the honest path, which the unlisted-entry check catches first.
+func (w *world) hostileSealedPath(path string) []string {
+	w.t.Helper()
+	w.ledger = fake.New()
+	w.ledger.Fund(w.writer.Address(), 5_000_000)
+	raw, _ := os.ReadFile(w.cfgPath)
+	p := w.resealOnChain([]container.Entry{{Path: path, Mode: 0o600, Data: raw}})
+
+	bRaw, err := container.Encode([]container.Entry{{Path: path, Mode: 0o600, Data: []byte("[validator_token]\nAAAA\n")}})
+	must(w.t, err)
+	bPacked, err := container.Pack(bRaw)
+	must(w.t, err)
+	p.Bundle = crypto.SealBundle(w.key.Key.BundleKey(p.BackupID), p.BackupID, bPacked)
+	bSum := sha256.Sum256(bRaw)
+	cSum := sha256.Sum256(p.Bundle)
+	p.Manifest.Bundle.PlainSHA256 = hex.EncodeToString(bSum[:])
+	p.Manifest.Bundle.CipherSHA256 = hex.EncodeToString(cSum[:])
+	p.Manifest.Bundle.Len = len(p.Bundle)
+
 	w.plan = p
 	w.submit(p)
 	must(w.t, os.WriteFile(w.bundle, p.Bundle, 0o600))

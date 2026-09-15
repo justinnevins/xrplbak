@@ -55,6 +55,24 @@ jobs:
             target: FuzzBundleRoundTrip
           - pkg: ./internal/anchor
             target: FuzzForgedMACIsRejected
+          - pkg: ./internal/restore
+            target: FuzzCheckPathContract
+          - pkg: ./internal/restore
+            target: FuzzAcceptedPathStaysInsideRoot
+          - pkg: ./internal/restore
+            target: FuzzBuildNoPanic
+          - pkg: ./internal/dump
+            target: FuzzLoadNoPanic
+          - pkg: ./internal/dump
+            target: FuzzLoadRefusesAmbiguousHashes
+          - pkg: ./internal/xrpl/rpc
+            target: FuzzResponseParsingNoPanic
+          - pkg: ./internal/xrpl/rpc
+            target: FuzzErrorResultIsNeverSuccess
+          - pkg: ./internal/xrpl/rpc
+            target: FuzzServerInfoRefusesEmptyAnswer
+          - pkg: ./internal/xrpl/rpc
+            target: FuzzFeeIsBounded
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
