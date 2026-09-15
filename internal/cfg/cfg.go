@@ -62,20 +62,106 @@ type Stanza struct {
 	LineNo int
 }
 
-// File is a parsed config.
+// Kind is what a source line is, for the classification view. Every line of
+// the file gets one, including the ones rippled ignores.
+type Kind int
+
+const (
+	// Blank is an empty line or one that is only whitespace.
+	Blank Kind = iota
+	// Comment is a line whose first non-space character is "#".
+	Comment
+	// Header is a "[name]" line.
+	Header
+	// Value is a line that carries a setting.
+	Value
+)
+
+// Line is one source line, kept verbatim. Raw is the line without its
+// terminator and End is the terminator itself, so concatenating Raw and End
+// over every line returns the original bytes. The operator's comments, blank
+// lines and line order are all backed up, so they have to survive parsing.
+type Line struct {
+	Kind   Kind
+	Raw    string
+	End    string
+	Stanza string
+	// No is the 1-based source line number.
+	No int
+	// Value is the line's setting with its inline comment removed, as
+	// rippled would read it. Empty unless Kind is Value.
+	Value string
+	// Comment is the inline comment Value dropped, terminator included,
+	// or "" when the line carried none.
+	Comment string
+}
+
+// File is a parsed config. Lines is the whole document in source order.
+// Stanzas is the classification view over it: value lines only, grouped by
+// stanza, with repeated stanza names merged.
 type File struct {
+	Lines   []Line
 	Stanzas []*Stanza
 }
 
-// Parse reads text into stanzas. Comments and blank lines are dropped.
-// Lines before the first stanza are kept under the empty name "".
+// Render returns the file's original bytes. Parse and Render are exact
+// inverses: a config that survives a backup must come back the way the
+// operator wrote it, not the way the tool understood it.
+func (f *File) Render() string {
+	var b strings.Builder
+	for _, l := range f.Lines {
+		b.WriteString(l.Raw)
+		b.WriteString(l.End)
+	}
+	return b.String()
+}
+
+// splitLines cuts text into lines, keeping each terminator. rippled ends a
+// line at "\n", "\r\n" or a lone "\r"; all three are preserved here rather
+// than normalized, because normalizing would change the operator's bytes.
+func splitLines(text string) []Line {
+	var out []Line
+	for i, n := 0, 1; ; n++ {
+		j := i
+		for j < len(text) && text[j] != '\n' && text[j] != '\r' {
+			j++
+		}
+		l := Line{Raw: text[i:j], No: n}
+		if j < len(text) {
+			if text[j] == '\r' && j+1 < len(text) && text[j+1] == '\n' {
+				l.End = "\r\n"
+				j += 2
+			} else {
+				l.End = text[j : j+1]
+				j++
+			}
+		}
+		out = append(out, l)
+		if l.End == "" {
+			return out
+		}
+		i = j
+	}
+}
+
+// Parse reads text into lines and stanzas. Lines before the first stanza
+// belong to the empty name "".
 func Parse(text string) *File {
-	f := &File{}
+	f := &File{Lines: splitLines(text)}
 	var cur *Stanza
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
-	for i, raw := range strings.Split(text, "\n") {
-		line := strings.Trim(raw, asciiSpace)
+	stanza := ""
+	for li := range f.Lines {
+		i := f.Lines[li].No - 1
+		f.Lines[li].Stanza = stanza
+		line := strings.Trim(f.Lines[li].Raw, asciiSpace)
+		if line == "" {
+			f.Lines[li].Kind = Blank
+			continue
+		}
+		if strings.HasPrefix(line, "#") && !strings.HasPrefix(line, MarkerPrefix) {
+			f.Lines[li].Kind = Comment
+			continue
+		}
 		if line == "" || (strings.HasPrefix(line, "#") && !strings.HasPrefix(line, MarkerPrefix)) {
 			continue
 		}
@@ -87,6 +173,9 @@ func Parse(text string) *File {
 				cur = &Stanza{Name: name, LineNo: i + 1}
 				f.Stanzas = append(f.Stanzas, cur)
 			}
+			f.Lines[li].Kind = Header
+			f.Lines[li].Stanza = name
+			stanza = name
 			continue
 		}
 		// A value line. Drop its inline comment so operator prose never
@@ -94,11 +183,15 @@ func Parse(text string) *File {
 		// comment would leave something a later parse reads as a header:
 		// writing that back would move every following line into a stanza
 		// the original file never had.
+		comment := ""
 		if c := inlineComment(line); c > 0 {
 			if v := strings.Trim(line[:c], asciiSpace); !looksLikeHeader(v) {
-				line = v
+				comment, line = line[c:], v
 			}
 		}
+		f.Lines[li].Kind = Value
+		f.Lines[li].Value = line
+		f.Lines[li].Comment = comment
 		if line == "" {
 			continue
 		}

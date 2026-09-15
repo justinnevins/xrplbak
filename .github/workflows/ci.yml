@@ -43,6 +43,8 @@ jobs:
             target: FuzzCanonicalIsFixedPoint
           - pkg: ./internal/cfg
             target: FuzzRippledReadingSurvivesCanonical
+          - pkg: ./internal/cfg
+            target: FuzzParseRenderIsExact
           - pkg: ./internal/redact
             target: FuzzSplitMergeRoundTrip
           - pkg: ./internal/redact
