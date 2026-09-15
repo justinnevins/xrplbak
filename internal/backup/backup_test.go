@@ -186,6 +186,9 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if d.BackupID != p.Manifest.BackupID {
+		t.Fatal("dump must record the backup id")
+	}
 	off := &dump.Client{D: d}
 	res2, err := discover.Run(off, keys, e.writer.Address(), 0)
 	if err != nil || res2.Latest == nil || !res2.AnchorOK {

@@ -73,15 +73,16 @@ func (e EpochKey) AnchorMAC(data []byte) []byte {
 	return m.Sum(nil)[:16]
 }
 
-// BackupID is SHA-256(container || u32be epoch || u32be seq)[0:16]. It
-// commits to the plaintext, so identical input at the same epoch and seq
-// yields identical output, and two backups never share an id.
-func BackupID(container []byte, epoch, seq uint32) []byte {
-	h := sha256.New()
-	h.Write(container)
-	h.Write(u32(epoch))
-	h.Write(u32(seq))
-	return h.Sum(nil)[:16]
+// BackupID is HMAC-SHA256(K_e, container || u32be epoch || u32be seq)[0:16].
+// It commits to the plaintext, so identical input at the same epoch and
+// seq yields identical output for one operator. Keying it stops two
+// operators (or two epochs) with the same config from sharing a public id.
+func (e EpochKey) BackupID(container []byte, epoch, seq uint32) []byte {
+	m := hmac.New(sha256.New, e[:])
+	m.Write(container)
+	m.Write(u32(epoch))
+	m.Write(u32(seq))
+	return m.Sum(nil)[:16]
 }
 
 // Zero wipes a key from memory. Best effort only.
