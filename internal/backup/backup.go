@@ -1,0 +1,446 @@
+// Package backup turns config files into a plan (dry run) and, on request,
+// submits the plan to the ledger. Plan is pure; Submit is the only place
+// that signs and sends.
+package backup
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/justinnevins/xrplbak/internal/anchor"
+	"github.com/justinnevins/xrplbak/internal/cfg"
+	"github.com/justinnevins/xrplbak/internal/chunk"
+	"github.com/justinnevins/xrplbak/internal/container"
+	"github.com/justinnevins/xrplbak/internal/crypto"
+	"github.com/justinnevins/xrplbak/internal/discover"
+	"github.com/justinnevins/xrplbak/internal/dump"
+	"github.com/justinnevins/xrplbak/internal/manifest"
+	"github.com/justinnevins/xrplbak/internal/redact"
+	"github.com/justinnevins/xrplbak/internal/xrpl"
+	"github.com/justinnevins/xrplbak/internal/xrpl/codec"
+	"github.com/justinnevins/xrplbak/internal/xrpl/sign"
+)
+
+// ToolVersion is stamped into manifests. Set from the Makefile via ldflags.
+var ToolVersion = "xrplbak/dev"
+
+// Options for one run.
+type Options struct {
+	ConfigPath     string
+	ValidatorsPath string // optional
+	Includes       []string
+	Key            *crypto.KeyFile
+	Now            time.Time
+	Tombstone      bool
+	Attestation    *manifest.Attestation
+	// Seq and Supersedes come from discovery when a client is available.
+	Seq        uint32
+	Supersedes string
+	// VPKSHA256 binds the backup to a validator identity without naming it.
+	VPKSHA256 string
+}
+
+// Plan is everything computable without the network.
+type Plan struct {
+	BackupID   []byte
+	Manifest   *manifest.Manifest
+	Chunks     [][]byte // ciphertext per on-chain chunk
+	ChunkMemos []codec.Memo
+	Bundle     []byte // encrypted bundle stream
+	Moves      []redact.Move
+	Role       string
+	OnChainTxt map[string]string // path -> canonical on-chain text, for the report
+	AttestText string
+}
+
+// Build reads, redacts, encodes, and encrypts. It never touches the network.
+func Build(o Options) (*Plan, error) {
+	if o.Key == nil {
+		return nil, errors.New("key file is required")
+	}
+	if o.Now.IsZero() {
+		o.Now = time.Now().UTC()
+	}
+	var onEntries, bundleEntries []container.Entry
+	var files []manifest.File
+	var moves []redact.Move
+	role := "node"
+	onTxt := map[string]string{}
+
+	addSplit := func(path string) error {
+		raw, mode, err := readFile(path)
+		if err != nil {
+			return err
+		}
+		res, err := redact.Split(cfg.Parse(string(raw)))
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		if res.Role == "validator" {
+			role = "validator"
+		}
+		moves = append(moves, res.Moves...)
+		on := res.OnChain.Canonical()
+		onTxt[path] = on
+		onEntries = append(onEntries, container.Entry{Path: path, Mode: mode, Data: []byte(on)})
+		where := "onchain"
+		if len(res.Bundle.Stanzas) > 0 {
+			bundleEntries = append(bundleEntries, container.Entry{Path: path, Mode: mode, Data: []byte(res.Bundle.Canonical())})
+			where = "onchain+bundle"
+		}
+		// Hash the canonical full file: that is what restore reproduces.
+		sum := sha256.Sum256([]byte(cfg.Parse(string(raw)).Canonical()))
+		files = append(files, manifest.File{Path: path, Mode: mode, SHA256: hex.EncodeToString(sum[:]), Where: where})
+		return nil
+	}
+	if !o.Tombstone {
+		if err := addSplit(o.ConfigPath); err != nil {
+			return nil, err
+		}
+		if o.ValidatorsPath != "" {
+			if err := addSplit(o.ValidatorsPath); err != nil {
+				return nil, err
+			}
+		}
+		for _, inc := range o.Includes {
+			raw, mode, err := readFile(inc)
+			if err != nil {
+				return nil, err
+			}
+			if err := refuseSecrets(inc, raw); err != nil {
+				return nil, err
+			}
+			bundleEntries = append(bundleEntries, container.Entry{Path: inc, Mode: mode, Data: raw})
+			sum := sha256.Sum256(raw)
+			files = append(files, manifest.File{Path: inc, Mode: mode, SHA256: hex.EncodeToString(sum[:]), Where: "bundle"})
+		}
+	}
+
+	onRaw, err := container.Encode(onEntries)
+	if err != nil {
+		return nil, err
+	}
+	bundleRaw, err := container.Encode(bundleEntries)
+	if err != nil {
+		return nil, err
+	}
+	onPacked, err := container.Pack(onRaw)
+	if err != nil {
+		return nil, err
+	}
+	bundlePacked, err := container.Pack(bundleRaw)
+	if err != nil {
+		return nil, err
+	}
+	pieces, err := chunk.Split(onPacked)
+	if err != nil {
+		return nil, err
+	}
+	if len(pieces) > chunk.MaxChunks {
+		return nil, fmt.Errorf("on-chain config needs %d chunks; the limit is %d (%d bytes). Move large stanzas to the bundle with --bundle-stanza, or shorten the config", len(pieces), chunk.MaxChunks, chunk.MaxChunks*container.BlockLen)
+	}
+
+	id := crypto.BackupID(append(append([]byte{}, onPacked...), bundlePacked...), o.Key.Epoch, o.Seq)
+	kb := o.Key.Key.BackupKey(id)
+	kbundle := o.Key.Key.BundleKey(id)
+
+	m := &manifest.Manifest{Epoch: o.Key.Epoch, Seq: o.Seq, BackupID: hex.EncodeToString(id), Created: o.Now.UTC().Format(time.RFC3339), Tool: ToolVersion}
+	m.Node.Role = role
+	m.Node.VPKSHA256 = o.VPKSHA256
+	onSum := sha256.Sum256(onRaw)
+	m.OnChain.PlainSHA256 = hex.EncodeToString(onSum[:])
+	m.OnChain.PlainLen = len(onRaw)
+	bSum := sha256.Sum256(bundleRaw)
+	m.Bundle.PlainSHA256 = hex.EncodeToString(bSum[:])
+	m.Files = files
+	for _, mv := range moves {
+		m.Redactions = append(m.Redactions, manifest.Redaction{Stanza: mv.Stanza, Lines: mv.Lines, To: "bundle"})
+	}
+	m.Supersedes = o.Supersedes
+	m.Tombstone = o.Tombstone
+	m.Attestation = o.Attestation
+
+	p := &Plan{BackupID: id, Manifest: m, Moves: moves, Role: role, OnChainTxt: onTxt}
+	if !o.Tombstone {
+		total := uint16(len(pieces))
+		for i, piece := range pieces {
+			ct := crypto.SealChunk(kb, id, uint16(i), total, piece)
+			memo, err := chunk.Encode(chunk.TypeChunk, id, uint16(i), total, ct)
+			if err != nil {
+				return nil, err
+			}
+			sum := sha256.Sum256(ct)
+			m.OnChain.Chunks = append(m.OnChain.Chunks, manifest.Chunk{Index: i, SHA256: hex.EncodeToString(sum[:])})
+			p.Chunks = append(p.Chunks, ct)
+			p.ChunkMemos = append(p.ChunkMemos, memo)
+		}
+		p.Bundle = crypto.SealBundle(kbundle, id, bundlePacked)
+		cSum := sha256.Sum256(p.Bundle)
+		m.Bundle.CipherSHA256 = hex.EncodeToString(cSum[:])
+		m.Bundle.Len = len(p.Bundle)
+	}
+	p.AttestText = manifest.AttestString(m.BackupID, m.OnChain.PlainSHA256, m.Bundle.PlainSHA256)
+	return p, nil
+}
+
+func readFile(path string) ([]byte, uint32, error) {
+	st, err := os.Lstat(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	if st.Mode()&os.ModeSymlink != 0 {
+		return nil, 0, fmt.Errorf("%s is a symlink; point at the real file", path)
+	}
+	if !st.Mode().IsRegular() {
+		return nil, 0, fmt.Errorf("%s is not a regular file", path)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	return b, uint32(st.Mode().Perm()), nil
+}
+
+// refuseSecrets applies the C0 scanners to an --include file. Includes go
+// to the bundle, but master keys still never enter the tool.
+func refuseSecrets(path string, raw []byte) error {
+	base := strings.ToLower(filepath.Base(path))
+	if base == "validator-keys.json" || base == "wallet.db" || strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") {
+		return fmt.Errorf("%s: refused. xrplbak never handles validator master keys, wallet.db, or private key files", path)
+	}
+	if strings.Contains(string(raw), "secret_key") || strings.Contains(string(raw), "-----BEGIN") {
+		return fmt.Errorf("%s: refused. File contains key material (secret_key or PEM)", path)
+	}
+	return nil
+}
+
+// ManifestMemos encrypts the finished manifest into memo parts.
+func ManifestMemos(key crypto.EpochKey, id []byte, m *manifest.Manifest) ([]codec.Memo, []byte, error) {
+	plain, err := manifest.Marshal(m)
+	if err != nil {
+		return nil, nil, err
+	}
+	kb := key.BackupKey(id)
+	n := (len(plain) + container.BlockLen - 1) / container.BlockLen
+	var memos []codec.Memo
+	for i := 0; i < n; i++ {
+		lo, hi := i*container.BlockLen, (i+1)*container.BlockLen
+		if hi > len(plain) {
+			hi = len(plain)
+		}
+		ct := crypto.SealManifest(kb, id, uint16(i), uint16(n), plain[lo:hi])
+		memo, err := chunk.Encode(chunk.TypeManifest, id, uint16(i), uint16(n), ct)
+		if err != nil {
+			return nil, nil, err
+		}
+		memos = append(memos, memo)
+	}
+	return memos, plain, nil
+}
+
+// Submitter carries what Submit needs beyond the plan.
+type Submitter struct {
+	Client  xrpl.Client
+	Writer  *sign.Key
+	Key     *crypto.KeyFile
+	Log     func(string, ...any)
+	Sleep   func(time.Duration)
+	MaxFee  uint64
+	Dump    *dump.Dump // filled in as transactions validate
+	DumpOut string     // path to write the dump after every step
+}
+
+// Submit sends chunks, then the manifest, then the anchor. Each step waits
+// for validation. The dump is rewritten after every validated transaction
+// so an interrupted run can be resumed.
+func (s *Submitter) Submit(p *Plan) error {
+	s.defaults()
+	account := s.Writer.Address()
+	if s.Dump == nil {
+		s.Dump = &dump.Dump{Account: account, BackupID: p.Manifest.BackupID}
+	}
+	// Resume: match chunk ciphertext hashes to already-recorded transactions.
+	recorded := map[string]dump.Tx{}
+	for _, t := range s.Dump.Txs {
+		rec, err := xrpl.ParseTxJSON(t.TxJSON, nil)
+		if err != nil {
+			continue
+		}
+		for _, m := range rec.Memos {
+			pl, ok := chunk.Decode(m)
+			if ok && pl.Type == chunk.TypeChunk {
+				sum := sha256.Sum256(pl.Ciphertext)
+				recorded[hex.EncodeToString(sum[:])] = t
+			}
+		}
+	}
+
+	m := p.Manifest
+	for i, memo := range p.ChunkMemos {
+		if t, ok := recorded[m.OnChain.Chunks[i].SHA256]; ok {
+			m.OnChain.Chunks[i].TxHash, m.OnChain.Chunks[i].Ledger = t.Hash, t.LedgerIndex
+			s.Log("chunk %d of %d already on ledger (tx %s)", i+1, len(p.ChunkMemos), t.Hash)
+			continue
+		}
+		s.Log("submitting chunk %d of %d", i+1, len(p.ChunkMemos))
+		hash, ledger, err := s.send(&codec.Tx{Type: codec.TxAccountSet, Memos: []codec.Memo{memo}})
+		if err != nil {
+			return fmt.Errorf("chunk %d: %w", i, err)
+		}
+		m.OnChain.Chunks[i].TxHash, m.OnChain.Chunks[i].Ledger = hash, ledger
+	}
+
+	memos, _, err := ManifestMemos(s.Key.Key, p.BackupID, m)
+	if err != nil {
+		return err
+	}
+	var manifestHash string
+	var manifestLedger uint32
+	for i, memo := range memos {
+		s.Log("submitting manifest part %d of %d", i+1, len(memos))
+		hash, ledger, err := s.send(&codec.Tx{Type: codec.TxAccountSet, Memos: []codec.Memo{memo}})
+		if err != nil {
+			return fmt.Errorf("manifest part %d: %w", i, err)
+		}
+		if i == 0 {
+			manifestHash, manifestLedger = hash, ledger
+		}
+	}
+
+	rec := &anchor.Record{ManifestLedger: manifestLedger, Epoch: m.Epoch, Seq: m.Seq}
+	copy(rec.BackupID[:], p.BackupID)
+	hb, _ := hex.DecodeString(manifestHash)
+	copy(rec.ManifestTxHash[:], hb)
+	data := anchor.Encode(s.Key.Key, rec)
+	s.Log("submitting DID anchor")
+	_, ledger, err := s.send(&codec.Tx{Type: codec.TxDIDSet, Data: data})
+	if err != nil {
+		return fmt.Errorf("anchor: %w", err)
+	}
+	s.Dump.DID = &dump.DID{LedgerIndex: ledger, Data: strings.ToUpper(hex.EncodeToString(data))}
+	return s.saveDump()
+}
+
+func (s *Submitter) defaults() {
+	if s.MaxFee == 0 {
+		s.MaxFee = 5000
+	}
+	if s.Sleep == nil {
+		s.Sleep = time.Sleep
+	}
+	if s.Log == nil {
+		s.Log = func(string, ...any) {}
+	}
+	if s.Dump == nil {
+		s.Dump = &dump.Dump{Account: s.Writer.Address()}
+	}
+}
+
+// DeleteAnchor sends DIDDelete. Used with --tombstone --delete-anchor.
+func (s *Submitter) DeleteAnchor() error {
+	_, _, err := s.send(&codec.Tx{Type: codec.TxDIDDelete})
+	return err
+}
+
+func (s *Submitter) saveDump() error {
+	if s.DumpOut == "" {
+		return nil
+	}
+	return s.Dump.Save(s.DumpOut)
+}
+
+// send signs, submits, waits for validation, and records the result.
+func (s *Submitter) send(tx *codec.Tx) (hash string, ledger uint32, err error) {
+	s.defaults()
+	for attempt := 0; attempt < 3; attempt++ {
+		st, err := s.Client.ServerInfo()
+		if err != nil {
+			return "", 0, err
+		}
+		acct, err := s.Client.AccountInfo(s.Writer.Address())
+		if errors.Is(err, xrpl.ErrNotFound) {
+			return "", 0, fmt.Errorf("account %s does not exist on this network yet. Fund it with at least 1.5 XRP and retry", s.Writer.Address())
+		} else if err != nil {
+			return "", 0, err
+		}
+		fee := st.OpenLedgerFee
+		if fee < st.BaseFeeDrops {
+			fee = st.BaseFeeDrops
+		}
+		if fee > s.MaxFee {
+			return "", 0, fmt.Errorf("network fee is %d drops, above the %d drop cap. Retry later or raise --max-fee", fee, s.MaxFee)
+		}
+		if acct.BalanceDrops < 1_200_000+fee {
+			return "", 0, fmt.Errorf("account %s holds %d drops; it needs the 1.2 XRP reserve plus fees", s.Writer.Address(), acct.BalanceDrops)
+		}
+		tx.Sequence = acct.Sequence
+		tx.LastLedgerSequence = st.ValidatedLedger + 20
+		tx.FeeDrops = fee
+		tx.SigningPubKey = s.Writer.PublicKey()
+		tx.Account = s.Writer.AccountID()
+		payload, err := codec.SigningPayload(tx)
+		if err != nil {
+			return "", 0, err
+		}
+		tx.TxnSignature = s.Writer.Sign(payload)
+		blob, err := codec.Serialize(tx, true)
+		if err != nil {
+			return "", 0, err
+		}
+		hash = codec.Hash(blob)
+		code, err := s.Client.Submit(blob)
+		if err != nil {
+			return "", 0, err
+		}
+		switch {
+		case code == "tesSUCCESS" || code == "terQUEUED":
+		case code == "tefPAST_SEQ" || code == "terPRE_SEQ":
+			s.Sleep(4 * time.Second)
+			continue
+		default:
+			return "", 0, fmt.Errorf("submit returned %s for tx %s", code, hash)
+		}
+		for i := 0; i < 45; i++ {
+			s.Sleep(2 * time.Second)
+			rec, err := s.Client.Tx(hash)
+			if err == nil && rec.Validated {
+				if rec.Result != "tesSUCCESS" {
+					return "", 0, fmt.Errorf("tx %s validated with result %s", hash, rec.Result)
+				}
+				s.Dump.Txs = append(s.Dump.Txs, dump.Tx{Hash: hash, LedgerIndex: rec.LedgerIndex, Result: rec.Result, TxJSON: rec.Raw})
+				if err := s.saveDump(); err != nil {
+					return "", 0, err
+				}
+				return hash, rec.LedgerIndex, nil
+			}
+			cur, err := s.Client.ServerInfo()
+			if err == nil && cur.ValidatedLedger > tx.LastLedgerSequence {
+				break // expired; resubmit with a fresh sequence
+			}
+		}
+	}
+	return "", 0, fmt.Errorf("transaction did not validate after 3 attempts")
+}
+
+// NextSeq asks discovery for the latest backup so the new one supersedes it.
+func NextSeq(c xrpl.Client, key *crypto.KeyFile, account string) (seq uint32, supersedes string, warnings []string, err error) {
+	res, err := discover.Run(c, discover.FileKeys{E: key.Epoch, Key: key.Key}, account, key.Epoch)
+	if err != nil {
+		return 0, "", nil, err
+	}
+	if res.Latest == nil {
+		return 1, "", res.Warnings, nil
+	}
+	return res.Latest.Manifest.Seq + 1, res.Latest.Manifest.BackupID, res.Warnings, nil
+}
+
+// chunkTx builds the carrier transaction for chunk i. Exposed for tests.
+func chunkTx(p *Plan, i int) *codec.Tx {
+	return &codec.Tx{Type: codec.TxAccountSet, Memos: []codec.Memo{p.ChunkMemos[i]}}
+}

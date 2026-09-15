@@ -1,0 +1,14 @@
+xrplbak is MIT licensed (see LICENSE). Two directories carry other licenses:
+
+internal/crypto/shamir/shamir.go
+  Copyright IBM Corp. 2016, 2025. Licensed under the Mozilla Public License 2.0.
+  Copied verbatim from github.com/hashicorp/vault/shamir. MPL-2.0 applies to
+  that file only. https://www.mozilla.org/en-US/MPL/2.0/
+
+internal/xrpl/sign/ripemd160/
+  Copyright 2010 The Go Authors. BSD-3-Clause (LICENSE in that directory).
+  Copied from golang.org/x/crypto/ripemd160 so the module has no external
+  dependencies.
+
+internal/crypto/bip39-english.txt
+  BIP-0039 English word list, public domain per the BIP repository.
