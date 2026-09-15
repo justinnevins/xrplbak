@@ -41,18 +41,25 @@ func TestCanonicalDropsEmptyNamelessStanza(t *testing.T) {
 	}
 }
 
-// TestHeaderWithTrailingComment pins the third defect the fuzz targets
-// found. The parser tested for a stanza header before it stripped an
-// inline comment, so "[server] # comment" was read as a value line, not a
-// header. Canonical then wrote it back as a value line, and the next parse
-// read it as a header, which silently moved every following line into the
-// wrong stanza.
+// TestHeaderWithTrailingComment was written for F-003 on the belief that
+// rippled accepts a trailing comment on a stanza header. It does not. Its
+// parseIniFile tests for a header on the raw trimmed line, first character
+// "[" and last character "]", before any comment is removed
+// (src/xrpld/core/detail/Config.cpp). So "[server] # the ports" is a value
+// line to rippled, and reading it as a header put every following line in a
+// stanza the operator's node does not have. The assertion is corrected here
+// rather than deleted, and the fixed-point cases it carried are kept.
 func TestHeaderWithTrailingComment(t *testing.T) {
 	f := Parse("[server] # the ports\nport_rpc\n")
-	if len(f.Stanzas) != 1 || f.Stanzas[0].Name != "server" {
-		t.Fatalf("header with a trailing comment did not parse as a header: %+v", f.Stanzas[0])
+	if len(f.Stanzas) != 1 || f.Stanzas[0].Name != "" {
+		t.Fatalf("a commented header must not open a stanza: %+v", f.Stanzas[0])
 	}
-	if got := f.Canonical(); got != "[server]\nport_rpc\n" {
+	if got := f.Stanzas[0].Lines; len(got) != 2 || got[0] != "[server] # the ports" {
+		t.Fatalf("lines: %q", got)
+	}
+	// The raw line is kept because stripping its comment would leave
+	// "[server]", which the next parse would read as a header.
+	if got := f.Canonical(); got != "[server] # the ports\nport_rpc\n" {
 		t.Fatalf("canonical: %q", got)
 	}
 	for _, text := range []string{"[] #", "[a] # c\nx\n", "[a]#c\n"} {
