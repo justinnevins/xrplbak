@@ -156,7 +156,12 @@ func Split(f *cfg.File) (*Result, error) {
 				return nil, &RefusedError{Stanza: s.Name, LineNo: s.LineNo + i + 1, Reason: "file contains an xrplbak restore marker; finish the restore (merge the bundle) before backing it up"}
 			}
 		}
-		if s.Name == "validator_token" {
+		// An empty [validator_token] stanza carries no token, so it does
+		// not make this host a validator. Calling it one puts "validator"
+		// in the on-chain manifest for a plain node and makes restore tell
+		// the operator to regenerate a token that never existed and to stop
+		// a validator that was never running.
+		if s.Name == "validator_token" && len(s.Lines) > 0 {
 			res.Role = "validator"
 		}
 		if len(s.Lines) == 0 {
