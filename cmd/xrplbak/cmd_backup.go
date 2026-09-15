@@ -27,7 +27,9 @@ func cmdRedact(args []string) error {
 	config := fs.String("config", "", "path to xrpld.cfg or rippled.cfg (default: auto-detect)")
 	validators := fs.String("validators", "", "path to validators.txt (default: from [validators_file] or beside the config)")
 	out := fs.String("out", "", "also write onchain/ and bundle/ copies into this directory")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return parseError(err)
+	}
 
 	cfgPath, err := findConfig(*config)
 	if err != nil {
@@ -47,7 +49,7 @@ func cmdRedact(args []string) error {
 			return fmt.Errorf("%s: %w", p, err)
 		}
 		hr(p)
-		fmt.Printf("  role: %s\n", res.Role)
+		fmt.Fprintf(stdout, "  role: %s\n", res.Role)
 		summarizeMoves(res.Moves)
 		if *out != "" {
 			for sub, f := range map[string]string{"onchain": res.OnChain.Canonical(), "bundle": res.Bundle.Canonical()} {
@@ -58,7 +60,7 @@ func cmdRedact(args []string) error {
 				if err := os.WriteFile(dst, []byte(f), 0o600); err != nil {
 					return err
 				}
-				fmt.Printf("  wrote %s\n", dst)
+				fmt.Fprintf(stdout, "  wrote %s\n", dst)
 			}
 		}
 	}
@@ -83,7 +85,9 @@ func cmdBackup(args []string) error {
 	vpk := fs.String("validator-key", "", "validator public key (nHB...) to bind, stored only as a hash inside the ciphertext")
 	attest := fs.String("attestation", "", "hex signature over the attest string, made offline with validator-keys sign")
 	attestVPK := fs.String("attestation-key", "", "validator public key (nHB...) that made the attestation")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return parseError(err)
+	}
 
 	cfgPath, err := findConfig(*config)
 	if err != nil {
@@ -147,33 +151,33 @@ func cmdBackup(args []string) error {
 func planReport(p *backup.Plan, o backup.Options) {
 	m := p.Manifest
 	hr("Plan")
-	fmt.Printf("  backup id:   %s\n", m.BackupID)
-	fmt.Printf("  epoch/seq:   %d / %d", m.Epoch, m.Seq)
+	fmt.Fprintf(stdout, "  backup id:   %s\n", m.BackupID)
+	fmt.Fprintf(stdout, "  epoch/seq:   %d / %d", m.Epoch, m.Seq)
 	if m.Supersedes != "" {
-		fmt.Printf("  (supersedes %s)", m.Supersedes[:16])
+		fmt.Fprintf(stdout, "  (supersedes %s)", m.Supersedes[:16])
 	}
-	fmt.Println()
-	fmt.Printf("  role:        %s\n", p.Role)
+	fmt.Fprintln(stdout)
+	fmt.Fprintf(stdout, "  role:        %s\n", p.Role)
 	for _, f := range m.Files {
-		fmt.Printf("  file:        %s  (%s)\n", f.Path, f.Where)
+		fmt.Fprintf(stdout, "  file:        %s  (%s)\n", f.Path, f.Where)
 	}
 	if m.Tombstone {
-		fmt.Println("  tombstone:   yes. No data will be stored.")
+		fmt.Fprintln(stdout, "  tombstone:   yes. No data will be stored.")
 		return
 	}
 	hr("Redactions (kept only in the off-chain bundle)")
 	summarizeMoves(p.Moves)
 	hr("On-chain")
-	fmt.Printf("  %d chunk transaction(s) + manifest + DID anchor, about %d drops in fees at the base rate\n", len(p.Chunks), (len(p.Chunks)+2)*10)
+	fmt.Fprintf(stdout, "  %d chunk transaction(s) + manifest + DID anchor, about %d drops in fees at the base rate\n", len(p.Chunks), (len(p.Chunks)+2)*10)
 	for i, c := range p.Chunks {
 		sum := sha256.Sum256(c)
-		fmt.Printf("  chunk %d: %d bytes ciphertext, sha256 %s\n", i+1, len(c), hex.EncodeToString(sum[:8]))
+		fmt.Fprintf(stdout, "  chunk %d: %d bytes ciphertext, sha256 %s\n", i+1, len(c), hex.EncodeToString(sum[:8]))
 	}
 	hr("Off-chain bundle")
-	fmt.Printf("  %d bytes encrypted. Keep it in two places. Its hash is in the manifest.\n", len(p.Bundle))
+	fmt.Fprintf(stdout, "  %d bytes encrypted. Keep it in two places. Its hash is in the manifest.\n", len(p.Bundle))
 	hr("Attestation (optional, team setups)")
-	fmt.Println("  sign this exact string offline with validator-keys sign, then pass --attestation:")
-	fmt.Println("  " + p.AttestText)
+	fmt.Fprintln(stdout, "  sign this exact string offline with validator-keys sign, then pass --attestation:")
+	fmt.Fprintln(stdout, "  "+p.AttestText)
 }
 
 func doDryRun(o backup.Options, warns []string, out string) error {
@@ -183,13 +187,13 @@ func doDryRun(o backup.Options, warns []string, out string) error {
 	}
 	planReport(p, o)
 	for _, w := range warns {
-		fmt.Println("  NOTE:", w)
+		fmt.Fprintln(stdout, "  NOTE:", w)
 	}
 	if err := writeBundle(p, out); err != nil {
 		return err
 	}
 	hr("Dry run")
-	fmt.Println("  Nothing was submitted. Re-run with --submit --rpc <mainnet|URL> to write this backup to the ledger.")
+	fmt.Fprintln(stdout, "  Nothing was submitted. Re-run with --submit --rpc <mainnet|URL> to write this backup to the ledger.")
 	return nil
 }
 
@@ -204,7 +208,7 @@ func writeBundle(p *backup.Plan, out string) error {
 	if err := os.WriteFile(path, p.Bundle, 0o600); err != nil {
 		return err
 	}
-	fmt.Printf("  bundle written: %s\n", path)
+	fmt.Fprintf(stdout, "  bundle written: %s\n", path)
 	return nil
 }
 
@@ -215,11 +219,11 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 	}
 	planReport(p, o)
 	for _, w := range warns {
-		fmt.Println("  WARNING:", w)
+		fmt.Fprintln(stdout, "  WARNING:", w)
 	}
 	hr("Submit")
-	fmt.Printf("  server:  %s\n", source)
-	fmt.Printf("  account: %s\n", writer.Address())
+	fmt.Fprintf(stdout, "  server:  %s\n", source)
+	fmt.Fprintf(stdout, "  account: %s\n", writer.Address())
 	if !confirm("  Submit these transactions?") {
 		return fail(exitUsage, "cancelled; nothing was submitted")
 	}
@@ -227,19 +231,19 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 		return err
 	}
 	dumpPath := filepath.Join(out, p.Manifest.BackupID+".dump.json")
-	s := &backup.Submitter{Client: client, Writer: writer, Key: o.Key, MaxFee: maxFee, DumpOut: dumpPath, Log: func(f string, a ...any) { fmt.Printf("  "+f+"\n", a...) }}
+	s := &backup.Submitter{Client: client, Writer: writer, Key: o.Key, MaxFee: maxFee, DumpOut: dumpPath, Log: func(f string, a ...any) { fmt.Fprintf(stdout, "  "+f+"\n", a...) }}
 	if prev, err := dump.Load(dumpPath); err == nil && prev.BackupID == p.Manifest.BackupID {
 		s.Dump = prev
-		fmt.Printf("  resuming from %s (%d transaction(s) already validated)\n", dumpPath, len(prev.Txs))
+		fmt.Fprintf(stdout, "  resuming from %s (%d transaction(s) already validated)\n", dumpPath, len(prev.Txs))
 	}
 	if err := s.Submit(p); err != nil {
 		if s.Dump != nil && len(s.Dump.Txs) > 0 {
-			fmt.Printf("  partial progress saved in %s; re-run the same command to resume\n", dumpPath)
+			fmt.Fprintf(stdout, "  partial progress saved in %s; re-run the same command to resume\n", dumpPath)
 		}
 		return fail(exitNetwork, "%v", err)
 	}
 	if o.Tombstone && deleteAnchor {
-		fmt.Println("  deleting DID anchor")
+		fmt.Fprintln(stdout, "  deleting DID anchor")
 		if err := s.DeleteAnchor(); err != nil {
 			return fail(exitNetwork, "%v", err)
 		}
@@ -248,8 +252,8 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 		return err
 	}
 	hr("Done")
-	fmt.Printf("  dump written:   %s (offline restore source; contains ciphertext only)\n", dumpPath)
-	fmt.Println("  keep safe:      the bundle file, the dump file, your recovery words or shares, and the account address")
-	fmt.Println("  verify anytime: xrplbak verify --rpc", strings.Fields(source)[0])
+	fmt.Fprintf(stdout, "  dump written:   %s (offline restore source; contains ciphertext only)\n", dumpPath)
+	fmt.Fprintln(stdout, "  keep safe:      the bundle file, the dump file, your recovery words or shares, and the account address")
+	fmt.Fprintln(stdout, "  verify anytime: xrplbak verify --rpc", strings.Fields(source)[0])
 	return nil
 }
