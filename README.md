@@ -85,6 +85,10 @@ Fund the writer account with at least 1.5 XRP: 1 XRP base reserve, 0.2 XRP DID r
 8. Start xrpld. Confirm `server_info` shows the expected `pubkey_validator`.
 9. Run `xrplbak init` on the new host only if the key file is gone, then take a fresh backup.
 
+## Try it in one minute
+
+A real Testnet backup of the fake example config ships in `examples/testnet-demo` with its recovery words. It restores offline from the dump file. See that directory's README for the two commands.
+
 ## Tested
 
 Unit tests cover redaction refusals, chunk sizing, reassembly, truncated history, wrong key, rollback, tombstones, resume, and the HTTP client against a fake ledger. The full flow ran on XRPL Testnet on 2026-09-15 (backup, second backup superseding the first, verify, restore from server, restore from the dump file, `--write`).

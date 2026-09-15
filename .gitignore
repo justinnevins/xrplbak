@@ -3,3 +3,4 @@ xrplbak-out/
 xrplbak.key
 *.bundle
 *.dump.json
+!examples/testnet-demo/*
