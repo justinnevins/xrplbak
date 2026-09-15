@@ -1,13 +1,54 @@
-// Package cfg parses xrpld.cfg / rippled.cfg / validators.txt. The format is
-// INI-like: "[name]" opens a stanza, following lines belong to it, "#" starts
-// a comment. Values are kept as raw lines because the tool never interprets
-// them beyond classification.
+// Package cfg parses xrpld.cfg / rippled.cfg / validators.txt.
+//
+// The rules here are rippled's own, read from source rather than from the
+// shape of the format:
+//
+//	XRPLF/rippled, src/xrpld/core/detail/Config.cpp       parseIniFile
+//	XRPLF/rippled, src/libxrpl/config/BasicConfig.cpp     Section::append
+//	XRPLF/rippled, src/libxrpl/basics/StringUtilities.cpp trimWhitespace
+//
+// rippled reads a config in two stages. parseIniFile ends a line at "\n",
+// at "\r\n" or at a lone "\r", trims ASCII whitespace, drops a line whose
+// first character is "#", and opens a new section when the trimmed line
+// starts with "[" and ends with "]" -- tested on the raw line, with no
+// comment stripping, and the name taken between the brackets untrimmed.
+// Section::append then ends each value at the first unescaped "#", at any
+// position and needing no leading space, reading "\#" as a literal "#".
+//
+// Parse follows both stages so that the sections and values xrplbak
+// classifies are the ones the operator's node actually uses.
 package cfg
 
 import (
 	"sort"
 	"strings"
 )
+
+// asciiSpace is rippled's isAsciiSpace. Go's unicode definition is wider, so
+// trimming with strings.TrimSpace would strip bytes rippled keeps and open a
+// stanza where rippled reads a value line.
+const asciiSpace = " \t\n\v\f\r"
+
+// inlineComment returns the index of the first "#" that starts a comment, or
+// -1. A "#" preceded by a backslash is an escaped literal, as Section::append
+// has it.
+func inlineComment(line string) int {
+	for i := 0; i < len(line); i++ {
+		if line[i] != '#' {
+			continue
+		}
+		if i > 0 && line[i-1] == '\\' {
+			continue
+		}
+		return i
+	}
+	return -1
+}
+
+// looksLikeHeader reports whether a line would be read as a stanza header.
+func looksLikeHeader(line string) bool {
+	return len(line) >= 2 && line[0] == '[' && line[len(line)-1] == ']'
+}
 
 // MarkerPrefix starts the one comment form the parser keeps: markers the
 // tool itself writes so a restored file shows where content is missing.
@@ -31,22 +72,34 @@ type File struct {
 func Parse(text string) *File {
 	f := &File{}
 	var cur *Stanza
-	for i, raw := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
-		line := strings.TrimSpace(raw)
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	for i, raw := range strings.Split(text, "\n") {
+		line := strings.Trim(raw, asciiSpace)
 		if line == "" || (strings.HasPrefix(line, "#") && !strings.HasPrefix(line, MarkerPrefix)) {
 			continue
 		}
-		if idx := strings.Index(line, " #"); idx > 0 {
-			line = strings.TrimSpace(line[:idx])
-		}
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			name := strings.TrimSpace(line[1 : len(line)-1])
+		if looksLikeHeader(line) {
+			name := line[1 : len(line)-1]
 			// A repeated stanza name continues the first one, so split and
 			// merge see exactly one stanza per name.
 			if cur = f.Get(name); cur == nil {
 				cur = &Stanza{Name: name, LineNo: i + 1}
 				f.Stanzas = append(f.Stanzas, cur)
 			}
+			continue
+		}
+		// A value line. Drop its inline comment so operator prose never
+		// reaches a public ledger, but keep the raw line when dropping the
+		// comment would leave something a later parse reads as a header:
+		// writing that back would move every following line into a stanza
+		// the original file never had.
+		if c := inlineComment(line); c > 0 {
+			if v := strings.Trim(line[:c], asciiSpace); !looksLikeHeader(v) {
+				line = v
+			}
+		}
+		if line == "" {
 			continue
 		}
 		if cur == nil {
