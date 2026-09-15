@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.0 (unreleased)
+## v1.0.0 (2026-09-15)
 
 - Commands: init, redact, backup, verify, restore.
 - On-chain: AccountSet memo chunks (v1 layout), encrypted manifest memos, DID Data anchor.
