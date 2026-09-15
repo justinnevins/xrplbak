@@ -79,6 +79,7 @@ func cmdBackup(args []string) error {
 	maxFee := fs.Uint64("max-fee", 5000, "abort if the network fee per transaction exceeds this many drops")
 	tombstone := fs.Bool("tombstone", false, "publish a tombstone that marks earlier backups as retired")
 	deleteAnchor := fs.Bool("delete-anchor", false, "with --tombstone: also delete the DID entry (frees 0.2 XRP)")
+	forceSeq := fs.Bool("force-seq", false, "submit even when existing backups could not be read (risks a duplicate seq)")
 	vpk := fs.String("validator-key", "", "validator public key (nHB...) to bind, stored only as a hash inside the ciphertext")
 	attest := fs.String("attestation", "", "hex signature over the attest string, made offline with validator-keys sign")
 	attestVPK := fs.String("attestation-key", "", "validator public key (nHB...) that made the attestation")
@@ -131,9 +132,13 @@ func cmdBackup(args []string) error {
 		if err != nil {
 			return err
 		}
-		warns = bindPlan(&o, client, kf, writer.Address())
+		var seqErr error
+		warns, seqErr = bindPlan(&o, client, kf, writer.Address())
 		if *submit {
-			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor)
+			if seqErr != nil && !*forceSeq {
+				return fail(exitNetwork, "could not read existing backups (%v). Fix the server or pass --force-seq to submit as seq 1 anyway", seqErr)
+			}
+			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, warns)
 		}
 	}
 	return doDryRun(o, warns, *out)
@@ -203,12 +208,15 @@ func writeBundle(p *backup.Plan, out string) error {
 	return nil
 }
 
-func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor bool) error {
+func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor bool, warns []string) error {
 	p, err := backup.Build(o)
 	if err != nil {
 		return err
 	}
 	planReport(p, o)
+	for _, w := range warns {
+		fmt.Println("  WARNING:", w)
+	}
 	hr("Submit")
 	fmt.Printf("  server:  %s\n", source)
 	fmt.Printf("  account: %s\n", writer.Address())

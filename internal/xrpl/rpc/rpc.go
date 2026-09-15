@@ -105,12 +105,19 @@ func (c *Client) Tx(hash string) (*xrpl.TxRecord, error) {
 	return rec, nil
 }
 
+// maxAccountTxPages bounds a misbehaving server: 5000 pages of 200 is one
+// million transactions, far beyond any writer account.
+const maxAccountTxPages = 5000
+
 // AccountTx pages through the whole validated history the server holds.
 func (c *Client) AccountTx(account string) ([]xrpl.TxRecord, xrpl.Range, error) {
 	var out []xrpl.TxRecord
 	rng := xrpl.Range{Min: -1, Max: -1}
 	var marker json.RawMessage
-	for {
+	for page := 0; ; page++ {
+		if page >= maxAccountTxPages {
+			return nil, rng, fmt.Errorf("account_tx: more than %d pages; the server keeps paging without end", maxAccountTxPages)
+		}
 		params := map[string]any{"account": account, "ledger_index_min": -1, "ledger_index_max": -1, "forward": true, "limit": 200}
 		if marker != nil {
 			params["marker"] = marker

@@ -37,8 +37,13 @@ func Parse(text string) *File {
 			continue
 		}
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			cur = &Stanza{Name: strings.TrimSpace(line[1 : len(line)-1]), LineNo: i + 1}
-			f.Stanzas = append(f.Stanzas, cur)
+			name := strings.TrimSpace(line[1 : len(line)-1])
+			// A repeated stanza name continues the first one, so split and
+			// merge see exactly one stanza per name.
+			if cur = f.Get(name); cur == nil {
+				cur = &Stanza{Name: name, LineNo: i + 1}
+				f.Stanzas = append(f.Stanzas, cur)
+			}
 			continue
 		}
 		if idx := strings.Index(line, " #"); idx > 0 {

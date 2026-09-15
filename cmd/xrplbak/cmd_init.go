@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,9 +20,15 @@ func cmdInit(args []string) error {
 	threshold := fs.Int("threshold", 0, "shares needed to recover (default 2 when --shares is set)")
 	passphrase := fs.Bool("key-passphrase", false, "protect xrplbak.key with a passphrase")
 	yes := fs.Bool("yes", false, "skip the re-entry check (scripts only; not recommended)")
+	rotate := fs.Bool("rotate", false, "advance the epoch of an existing key file (asks for the recovery words or shares)")
+	wordsFile := fs.String("words-file", "", "with --rotate: file with the recovery words")
+	sharesFile := fs.String("shares-file", "", "with --rotate: file with recovery shares, one per line")
 	fs.Parse(args)
 
 	keyPath := filepath.Join(*out, "xrplbak.key")
+	if *rotate {
+		return doRotate(keyPath, *wordsFile, *sharesFile, *passphrase)
+	}
 	if _, err := os.Stat(keyPath); err == nil {
 		return fail(exitWrite, "%s already exists. Move it away first; init never overwrites a key file", keyPath)
 	}
@@ -101,6 +108,59 @@ func cmdInit(args []string) error {
 	fmt.Printf("  next:      fund %s with at least 1.5 XRP from a fresh path (1 XRP base reserve + 0.2 XRP DID reserve + fees).\n", writer.Address())
 	fmt.Println("  then:      xrplbak backup            (dry run, safe)")
 	fmt.Println("             xrplbak backup --submit --rpc mainnet")
+	return nil
+}
+
+// doRotate derives the next epoch key from the recovery key and rewrites
+// the key file. The writer account stays the same. Use it after a host
+// compromise: the thief keeps the old epoch, not the new one.
+func doRotate(keyPath, wordsFile, sharesFile string, passphrase bool) error {
+	b, err := os.ReadFile(keyPath)
+	if err != nil {
+		return fail(exitUsage, "no key file at %s to rotate", keyPath)
+	}
+	var pw []byte
+	if crypto.IsWrapped(b) {
+		pw = []byte(prompt("Current key file passphrase: "))
+	}
+	kf, err := crypto.DecodeKeyFile(b, pw)
+	if err != nil {
+		return fail(exitAuth, "%v", err)
+	}
+	_, root, err := recoveryKeys(wordsFile, sharesFile)
+	if err != nil {
+		return err
+	}
+	if root.DeriveEpochKey(kf.Epoch) != kf.Key {
+		return fail(exitAuth, "the recovery key does not match this key file (epoch %d). Wrong words, or wrong key file", kf.Epoch)
+	}
+	next := &crypto.KeyFile{Epoch: kf.Epoch + 1, Key: root.DeriveEpochKey(kf.Epoch + 1), AccountID: kf.AccountID, WriterSeed: kf.WriterSeed}
+	crypto.Zero(root[:])
+	var out []byte
+	if passphrase {
+		p := prompt("Choose a passphrase for xrplbak.key: ")
+		if p != prompt("Repeat it: ") {
+			return fail(exitUsage, "passphrases differ")
+		}
+		out, err = next.EncodeWrapped([]byte(p))
+		if err != nil {
+			return err
+		}
+	} else {
+		out = next.Encode()
+	}
+	old := keyPath + ".epoch" + strconv.FormatUint(uint64(kf.Epoch), 10)
+	if err := os.Rename(keyPath, old); err != nil {
+		return err
+	}
+	if err := os.WriteFile(keyPath, out, 0o600); err != nil {
+		return err
+	}
+	hr("Rotated")
+	fmt.Printf("  key file:  %s is now epoch %d\n", keyPath, next.Epoch)
+	fmt.Printf("  old key:   moved to %s; delete it once the new epoch has a backup\n", old)
+	fmt.Println("  next:      xrplbak backup --submit --rpc mainnet   (first backup of the new epoch is seq 1)")
+	fmt.Println("  note:      restores with the recovery words find every epoch; the key file finds only its own")
 	return nil
 }
 

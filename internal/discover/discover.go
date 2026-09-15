@@ -99,51 +99,76 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 		return nil, fmt.Errorf("read DID anchor: %w", err)
 	}
 
-	// 2. History scan.
+	// 2. History scan. Parts are grouped by (backup_id, nonce prefix) and
+	// every ciphertext seen for an index is kept, so a later junk memo
+	// cannot shadow a real part.
 	txs, rng, err := c.AccountTx(account)
 	if err != nil {
 		return nil, fmt.Errorf("account_tx for %s: %w", account, err)
 	}
 	res.Range = rng
-	parts := map[[16]byte]map[uint16]memoPart{}
-	totals := map[[16]byte]uint16{}
+	type setKey struct {
+		id    [16]byte
+		nonce [crypto.ManifestNonceLen]byte
+	}
+	sets := map[setKey]*partSet{}
+	var order []setKey
 	for _, t := range txs {
 		if t.Account != account || t.Result != "tesSUCCESS" {
 			continue
 		}
 		for _, m := range t.Memos {
 			p, ok := chunk.Decode(m)
-			if !ok || p.Type != chunk.TypeManifest {
+			if !ok || p.Type != chunk.TypeManifest || p.Total > maxManifestParts {
 				continue
 			}
-			if parts[p.BackupID] == nil {
-				parts[p.BackupID] = map[uint16]memoPart{}
+			k := setKey{p.BackupID, p.Nonce}
+			ps := sets[k]
+			if ps == nil {
+				ps = &partSet{total: p.Total, parts: map[uint16][]memoPart{}}
+				sets[k] = ps
+				order = append(order, k)
 			}
-			parts[p.BackupID][p.Index] = memoPart{ct: p.Ciphertext, tx: t.Hash, ledger: t.LedgerIndex}
-			totals[p.BackupID] = p.Total
+			if p.Total != ps.total {
+				continue
+			}
+			ps.parts[p.Index] = append(ps.parts[p.Index], memoPart{ct: p.Ciphertext, tx: t.Hash, ledger: t.LedgerIndex})
 		}
 	}
-	for id, pm := range parts {
-		total := totals[id]
-		if int(total) != len(pm) {
-			res.Warnings = append(res.Warnings, fmt.Sprintf("manifest %s: only %d of %d parts in searched range", hex.EncodeToString(id[:8]), len(pm), total))
+	for _, k := range order {
+		ps := sets[k]
+		if int(ps.total) != len(ps.parts) {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("manifest %s: only %d of %d parts in searched range", hex.EncodeToString(k.id[:8]), len(ps.parts), ps.total))
 			continue
 		}
-		cand, ok := openManifest(keys, id, pm, total, epochHint)
+		cand, ok := openManifest(keys, k.id, k.nonce[:], ps, epochHint)
 		if !ok {
 			res.Rejected++
+			if res.AnchorOK && res.Anchor.BackupID == k.id {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("a manifest for the anchored backup %s failed authentication; someone with the writer key may be posting junk", hex.EncodeToString(k.id[:8])))
+			}
 			continue
 		}
-		if res.Anchor != nil && res.AnchorOK && res.Anchor.BackupID == id {
+		if res.Anchor != nil && res.AnchorOK && res.Anchor.BackupID == k.id {
 			cand.FromAnchor = true
 		}
 		res.Candidates = append(res.Candidates, cand)
 	}
-	sort.Slice(res.Candidates, func(i, j int) bool {
-		return manifest.Newer(res.Candidates[i].Manifest, res.Candidates[j].Manifest)
+	sort.SliceStable(res.Candidates, func(i, j int) bool {
+		a, b := res.Candidates[i], res.Candidates[j]
+		if a.Manifest.Epoch != b.Manifest.Epoch || a.Manifest.Seq != b.Manifest.Seq {
+			return manifest.Newer(a.Manifest, b.Manifest)
+		}
+		return a.Ledger > b.Ledger
 	})
 	if len(res.Candidates) > 0 {
 		res.Latest = res.Candidates[0]
+		if len(res.Candidates) > 1 {
+			a, b := res.Candidates[0], res.Candidates[1]
+			if a.Manifest.Epoch == b.Manifest.Epoch && a.Manifest.Seq == b.Manifest.Seq {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("two backups share epoch %d seq %d; using the later one (ledger %d). Check the writer key and re-run backup", a.Manifest.Epoch, a.Manifest.Seq, a.Ledger))
+			}
+		}
 	}
 	if res.AnchorOK && res.Latest != nil && !res.Latest.FromAnchor {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor points at seq %d but seq %d exists and authenticates; possible rollback by a writer-key holder. Using seq %d.", res.Anchor.Seq, res.Latest.Manifest.Seq, res.Latest.Manifest.Seq))
@@ -151,8 +176,15 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 	if res.AnchorOK && res.Latest == nil {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor names manifest tx %s (ledger %d) but that transaction is not in the searched range %d to %d", res.Anchor.TxHashHex(), res.Anchor.ManifestLedger, rng.Min, rng.Max))
 	}
+	if res.Rejected > 0 && res.Latest == nil {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("%d manifest(s) present but none authenticate: wrong recovery key, wrong epoch, or junk from a writer-key thief", res.Rejected))
+	}
 	return res, nil
 }
+
+// maxManifestParts bounds memory on hostile memos. A real manifest is
+// under 4 KB, so 16 parts is far above any legitimate total.
+const maxManifestParts = 16
 
 type memoPart struct {
 	ct     []byte
@@ -160,7 +192,14 @@ type memoPart struct {
 	ledger uint32
 }
 
-func openManifest(keys Keys, id [16]byte, pm map[uint16]memoPart, total uint16, hint uint32) (*Candidate, bool) {
+type partSet struct {
+	total uint16
+	parts map[uint16][]memoPart
+}
+
+// openManifest tries each epoch, and for each index every ciphertext seen,
+// until a full manifest authenticates.
+func openManifest(keys Keys, id [16]byte, nonce []byte, ps *partSet, hint uint32) (*Candidate, bool) {
 	for _, e := range probeOrder(hint) {
 		k, ok := keys.Epoch(e)
 		if !ok {
@@ -168,14 +207,23 @@ func openManifest(keys Keys, id [16]byte, pm map[uint16]memoPart, total uint16, 
 		}
 		kb := k.BackupKey(id[:])
 		var plain []byte
+		var first memoPart
 		good := true
-		for i := uint16(0); i < total; i++ {
-			p, err := crypto.OpenManifest(kb, id[:], i, total, pm[i].ct)
-			if err != nil {
-				good = false
+		for i := uint16(0); i < ps.total && good; i++ {
+			opened := false
+			for _, cand := range ps.parts[i] {
+				p, err := crypto.OpenManifest(kb, id[:], nonce, i, ps.total, cand.ct)
+				if err != nil {
+					continue
+				}
+				plain = append(plain, p...)
+				if i == 0 {
+					first = cand
+				}
+				opened = true
 				break
 			}
-			plain = append(plain, p...)
+			good = opened
 		}
 		if !good {
 			continue
@@ -184,18 +232,19 @@ func openManifest(keys Keys, id [16]byte, pm map[uint16]memoPart, total uint16, 
 		if err != nil || m.BackupID != hex.EncodeToString(id[:]) || m.Epoch != e {
 			continue
 		}
-		return &Candidate{Manifest: m, BackupID: id, Epoch: e, TxHash: pm[0].tx, Ledger: pm[0].ledger, Plain: plain}, true
+		return &Candidate{Manifest: m, BackupID: id, Epoch: e, TxHash: first.tx, Ledger: first.ledger, Plain: plain}, true
 	}
 	return nil, false
 }
 
+// probeOrder tries the hint, then earlier epochs, then a few later ones.
 func probeOrder(hint uint32) []uint32 {
 	var out []uint32
 	for e := int64(hint); e >= 0 && len(out) < maxEpochProbe; e-- {
 		out = append(out, uint32(e))
 	}
-	for e := hint + 1; e <= hint+8; e++ {
-		out = append(out, e)
+	for e := int64(hint) + 1; e <= int64(hint)+8 && e <= 0xFFFFFFFF; e++ {
+		out = append(out, uint32(e))
 	}
 	return out
 }

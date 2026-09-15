@@ -66,10 +66,21 @@ var onChainStanzas = map[string]bool{
 	"rpc_ip": true, "rpc_port": true,
 }
 
-// Stanzas whose lines legitimately contain long hex or base58 keys.
+// Stanzas whose lines legitimately contain long hex or base58 keys, so the
+// hex and base64 scanners skip them.
 var keyStanzas = map[string]bool{
 	"validator_list_keys": true, "validators": true, "amendments": true, "veto_amendments": true,
 	"cluster_nodes": true, "validator_token": true, "validator_key_revocation": true,
+}
+
+// Stanzas whose base64 bodies can contain runs that look like seeds. The
+// seed scanner skips only these two; everything else is scanned.
+var blobStanzas = map[string]bool{"validator_token": true, "validator_key_revocation": true}
+
+// Keys inside [port_*] stanzas that carry credentials or key paths.
+var portSecretKeys = map[string]bool{
+	"admin": true, "secure_gateway": true, "user": true, "password": true,
+	"admin_user": true, "admin_password": true, "ssl_key": true, "ssl_cert": true, "ssl_chain": true,
 }
 
 var (
@@ -115,16 +126,15 @@ func Split(f *cfg.File) (*Result, error) {
 		if reason, bad := neverStanzas[s.Name]; bad {
 			return nil, &RefusedError{Stanza: s.Name, LineNo: s.LineNo, Reason: reason}
 		}
-		if !keyStanzas[s.Name] {
-			for i, l := range s.Lines {
-				if reSeed.MatchString(l) || reRFC1751.MatchString(l) {
-					return nil, &RefusedError{Stanza: s.Name, LineNo: s.LineNo + i + 1, Reason: "line looks like a seed or secret key"}
-				}
-			}
-		}
 		for i, l := range s.Lines {
+			if !blobStanzas[s.Name] && (reSeed.MatchString(l) || reRFC1751.MatchString(l)) {
+				return nil, &RefusedError{Stanza: s.Name, LineNo: s.LineNo + i + 1, Reason: "line looks like a seed or secret key"}
+			}
 			if strings.Contains(l, "-----BEGIN") {
 				return nil, &RefusedError{Stanza: s.Name, LineNo: s.LineNo + i + 1, Reason: "PEM key material"}
+			}
+			if strings.HasPrefix(l, cfg.MarkerPrefix) {
+				return nil, &RefusedError{Stanza: s.Name, LineNo: s.LineNo + i + 1, Reason: "file contains an xrplbak restore marker; finish the restore (merge the bundle) before backing it up"}
 			}
 		}
 		if s.Name == "validator_token" {
@@ -173,8 +183,8 @@ func (r *Result) splitLines(s *cfg.Stanza) {
 // lineReason returns "" if the line may stay on-chain, else why it moves.
 func lineReason(stanza, line string) string {
 	key := strings.ToLower(strings.TrimSpace(strings.SplitN(line, "=", 2)[0]))
-	if strings.HasPrefix(stanza, "port_") && (key == "admin" || key == "secure_gateway") {
-		return "admin access list"
+	if strings.HasPrefix(stanza, "port_") && portSecretKeys[key] {
+		return "access list, credential, or key path"
 	}
 	if !keyStanzas[stanza] {
 		if reHex.MatchString(line) {

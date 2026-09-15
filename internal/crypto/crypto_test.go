@@ -3,6 +3,7 @@ package crypto
 import (
 	"bytes"
 	"encoding/hex"
+	"strings"
 	"testing"
 )
 
@@ -52,6 +53,13 @@ func TestSharesRoundTrip(t *testing.T) {
 	}
 	if _, err := Combine([]string{shares[0]}); err == nil {
 		t.Fatal("1 of 3 must fail")
+	}
+	big, _ := r.Split(5, 3)
+	if _, err := Combine([]string{big[0], big[1]}); err == nil || !strings.Contains(err.Error(), "need 3") {
+		t.Fatal("2 of a 3-of-5 split must be refused, got", err)
+	}
+	if _, err := Combine([]string{shares[0], big[1]}); err == nil {
+		t.Fatal("shares from different splits must be refused")
 	}
 	bad := "A" + shares[0][1:]
 	if _, err := Combine([]string{bad, shares[1]}); err == nil {
@@ -105,9 +113,20 @@ func TestChunkAEAD(t *testing.T) {
 	if _, err := OpenChunk(r.DeriveEpochKey(1).BackupKey(id), id, 2, 5, ct); err != ErrAuth {
 		t.Fatal("wrong epoch must fail")
 	}
-	m := SealManifest(k, id, 0, 1, []byte("manifest"))
+	pfx, _ := NewManifestNonce()
+	m := SealManifest(k, id, pfx, 0, 1, []byte("manifest"))
 	if _, err := OpenChunk(k, id, 0, 1, m); err != ErrAuth {
 		t.Fatal("manifest must not open as chunk")
+	}
+	if p, err := OpenManifest(k, id, pfx, 0, 1, m); err != nil || string(p) != "manifest" {
+		t.Fatal("manifest round trip", err)
+	}
+	pfx2, _ := NewManifestNonce()
+	if bytes.Equal(SealManifest(k, id, pfx2, 0, 1, []byte("manifest")), m) {
+		t.Fatal("two sealing runs must not share a nonce")
+	}
+	if _, err := OpenManifest(k, id, pfx2, 0, 1, m); err != ErrAuth {
+		t.Fatal("wrong prefix must fail")
 	}
 }
 

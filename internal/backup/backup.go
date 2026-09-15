@@ -74,7 +74,7 @@ func Build(o Options) (*Plan, error) {
 	onTxt := map[string]string{}
 
 	addSplit := func(path string) error {
-		raw, mode, err := readFile(path)
+		raw, mode, path, err := readFile(path)
 		if err != nil {
 			return err
 		}
@@ -109,7 +109,7 @@ func Build(o Options) (*Plan, error) {
 			}
 		}
 		for _, inc := range o.Includes {
-			raw, mode, err := readFile(inc)
+			raw, mode, inc, err := readFile(inc)
 			if err != nil {
 				return nil, err
 			}
@@ -171,7 +171,7 @@ func Build(o Options) (*Plan, error) {
 		total := uint16(len(pieces))
 		for i, piece := range pieces {
 			ct := crypto.SealChunk(kb, id, uint16(i), total, piece)
-			memo, err := chunk.Encode(chunk.TypeChunk, id, uint16(i), total, ct)
+			memo, err := chunk.Encode(chunk.TypeChunk, id, uint16(i), total, nil, ct)
 			if err != nil {
 				return nil, err
 			}
@@ -189,22 +189,30 @@ func Build(o Options) (*Plan, error) {
 	return p, nil
 }
 
-func readFile(path string) ([]byte, uint32, error) {
+// readFile reads a regular file and returns its content, permission bits,
+// and absolute path. Paths are stored absolute so restore can never see
+// a ".." component.
+func readFile(path string) ([]byte, uint32, string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	path = abs
 	st, err := os.Lstat(path)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	if st.Mode()&os.ModeSymlink != 0 {
-		return nil, 0, fmt.Errorf("%s is a symlink; point at the real file", path)
+		return nil, 0, "", fmt.Errorf("%s is a symlink; point at the real file", path)
 	}
 	if !st.Mode().IsRegular() {
-		return nil, 0, fmt.Errorf("%s is not a regular file", path)
+		return nil, 0, "", fmt.Errorf("%s is not a regular file", path)
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
-	return b, uint32(st.Mode().Perm()), nil
+	return b, uint32(st.Mode().Perm()), path, nil
 }
 
 // refuseSecrets applies the C0 scanners to an --include file. Includes go
@@ -220,22 +228,28 @@ func refuseSecrets(path string, raw []byte) error {
 	return nil
 }
 
-// ManifestMemos encrypts the finished manifest into memo parts.
+// ManifestMemos encrypts the finished manifest into memo parts under a
+// fresh random nonce prefix. Call it once per sealing run; never re-seal a
+// manifest that already landed (Submit reuses recorded parts instead).
 func ManifestMemos(key crypto.EpochKey, id []byte, m *manifest.Manifest) ([]codec.Memo, []byte, error) {
 	plain, err := manifest.Marshal(m)
 	if err != nil {
 		return nil, nil, err
 	}
+	prefix, err := crypto.NewManifestNonce()
+	if err != nil {
+		return nil, nil, err
+	}
 	kb := key.BackupKey(id)
-	n := (len(plain) + container.BlockLen - 1) / container.BlockLen
+	n := (len(plain) + chunk.ManifestPartLen - 1) / chunk.ManifestPartLen
 	var memos []codec.Memo
 	for i := 0; i < n; i++ {
-		lo, hi := i*container.BlockLen, (i+1)*container.BlockLen
+		lo, hi := i*chunk.ManifestPartLen, (i+1)*chunk.ManifestPartLen
 		if hi > len(plain) {
 			hi = len(plain)
 		}
-		ct := crypto.SealManifest(kb, id, uint16(i), uint16(n), plain[lo:hi])
-		memo, err := chunk.Encode(chunk.TypeManifest, id, uint16(i), uint16(n), ct)
+		ct := crypto.SealManifest(kb, id, prefix, uint16(i), uint16(n), plain[lo:hi])
+		memo, err := chunk.Encode(chunk.TypeManifest, id, uint16(i), uint16(n), prefix, ct)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -264,8 +278,14 @@ func (s *Submitter) Submit(p *Plan) error {
 	if s.Dump.BackupID == "" {
 		s.Dump.BackupID = p.Manifest.BackupID
 	}
-	// Resume: match chunk ciphertext hashes to already-recorded transactions.
+	// Resume: match chunk ciphertext hashes to already-recorded transactions,
+	// and collect manifest parts already on the ledger, grouped by nonce.
 	recorded := map[string]dump.Tx{}
+	type landed struct {
+		tx    dump.Tx
+		total uint16
+	}
+	manifestParts := map[[crypto.ManifestNonceLen]byte]map[uint16]landed{}
 	for _, t := range s.Dump.Txs {
 		rec, err := xrpl.ParseTxJSON(t.TxJSON, nil)
 		if err != nil {
@@ -273,9 +293,17 @@ func (s *Submitter) Submit(p *Plan) error {
 		}
 		for _, m := range rec.Memos {
 			pl, ok := chunk.Decode(m)
-			if ok && pl.Type == chunk.TypeChunk {
+			if !ok || pl.BackupID != [16]byte(p.BackupID) {
+				continue
+			}
+			if pl.Type == chunk.TypeChunk {
 				sum := sha256.Sum256(pl.Ciphertext)
 				recorded[hex.EncodeToString(sum[:])] = t
+			} else {
+				if manifestParts[pl.Nonce] == nil {
+					manifestParts[pl.Nonce] = map[uint16]landed{}
+				}
+				manifestParts[pl.Nonce][pl.Index] = landed{tx: t, total: pl.Total}
 			}
 		}
 	}
@@ -295,20 +323,31 @@ func (s *Submitter) Submit(p *Plan) error {
 		m.OnChain.Chunks[i].TxHash, m.OnChain.Chunks[i].Ledger = hash, ledger
 	}
 
-	memos, _, err := ManifestMemos(s.Key.Key, p.BackupID, m)
-	if err != nil {
-		return err
-	}
 	var manifestHash string
 	var manifestLedger uint32
-	for i, memo := range memos {
-		s.Log("submitting manifest part %d of %d", i+1, len(memos))
-		hash, ledger, err := s.send(&codec.Tx{Type: codec.TxAccountSet, Memos: []codec.Memo{memo}})
-		if err != nil {
-			return fmt.Errorf("manifest part %d: %w", i, err)
+	// A complete manifest already on the ledger is reused as is. A partial
+	// one is abandoned: re-sealing it would reuse its nonce.
+	for _, parts := range manifestParts {
+		if first, ok := parts[0]; ok && int(first.total) == len(parts) {
+			manifestHash, manifestLedger = first.tx.Hash, first.tx.LedgerIndex
+			s.Log("manifest already on ledger (tx %s)", manifestHash)
+			break
 		}
-		if i == 0 {
-			manifestHash, manifestLedger = hash, ledger
+	}
+	if manifestHash == "" {
+		memos, _, err := ManifestMemos(s.Key.Key, p.BackupID, m)
+		if err != nil {
+			return err
+		}
+		for i, memo := range memos {
+			s.Log("submitting manifest part %d of %d", i+1, len(memos))
+			hash, ledger, err := s.send(&codec.Tx{Type: codec.TxAccountSet, Memos: []codec.Memo{memo}})
+			if err != nil {
+				return fmt.Errorf("manifest part %d: %w", i, err)
+			}
+			if i == 0 {
+				manifestHash, manifestLedger = hash, ledger
+			}
 		}
 	}
 
@@ -433,10 +472,16 @@ func NextSeq(c xrpl.Client, key *crypto.KeyFile, account string) (seq uint32, su
 	if err != nil {
 		return 0, "", nil, err
 	}
-	if res.Latest == nil {
-		return 1, "", res.Warnings, nil
+	warns := res.Warnings
+	if key.Epoch > 0 && res.Latest == nil {
+		// After a rotation the key file cannot read older epochs. That is
+		// the design, not an attack, so say so instead of alarming.
+		warns = []string{fmt.Sprintf("key file is epoch %d; backups from earlier epochs are not readable with it (expected after a rotation). This backup starts the new epoch at seq 1", key.Epoch)}
 	}
-	return res.Latest.Manifest.Seq + 1, res.Latest.Manifest.BackupID, res.Warnings, nil
+	if res.Latest == nil {
+		return 1, "", warns, nil
+	}
+	return res.Latest.Manifest.Seq + 1, res.Latest.Manifest.BackupID, warns, nil
 }
 
 // chunkTx builds the carrier transaction for chunk i. Exposed for tests.
