@@ -41,6 +41,8 @@ jobs:
         include:
           - pkg: ./internal/cfg
             target: FuzzCanonicalIsFixedPoint
+          - pkg: ./internal/cfg
+            target: FuzzRippledReadingSurvivesCanonical
           - pkg: ./internal/redact
             target: FuzzSplitMergeRoundTrip
           - pkg: ./internal/redact

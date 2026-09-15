@@ -207,3 +207,44 @@ func TestEmptyStanzaRoundTrips(t *testing.T) {
 		}
 	}
 }
+
+// TestEmptyValidatorTokenIsNotAValidator pins F-004. An empty
+// [validator_token] stanza holds no token. Setting the role from the header
+// alone published "validator" in the manifest for a host that does not
+// validate, and made restore hand the operator two instructions about a
+// token that never existed.
+func TestEmptyValidatorTokenIsNotAValidator(t *testing.T) {
+	res, err := Split(cfg.Parse("[validator_token]\n[server]\nport_rpc\n"))
+	if err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	if res.Role != "node" {
+		t.Fatalf("role = %q, want %q", res.Role, "node")
+	}
+	// A stanza that carries a token still reads as a validator.
+	res, err = Split(cfg.Parse("[validator_token]\neyJ2YWxpZGF0aW9u\n"))
+	if err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	if res.Role != "validator" {
+		t.Fatalf("role = %q, want %q", res.Role, "validator")
+	}
+}
+
+// TestInlineCommentDoesNotReachTheChain pins the redaction half of F-005.
+// rippled ends a value at the first unescaped "#", with no leading space
+// required, so text after it is operator prose the node never reads. It must
+// not be published on a public ledger.
+func TestInlineCommentDoesNotReachTheChain(t *testing.T) {
+	res, err := Split(cfg.Parse("[port_rpc]\nport=5005#admin_password=hunter2\n"))
+	if err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	on := res.OnChain.Canonical()
+	if strings.Contains(on, "hunter2") {
+		t.Fatalf("comment text reached the on-chain copy:\n%s", on)
+	}
+	if !strings.Contains(on, "port=5005") {
+		t.Fatalf("the setting itself was lost:\n%s", on)
+	}
+}
