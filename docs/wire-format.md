@@ -64,4 +64,12 @@ Optional wrap: `"XBKW" | u8 1 | salt(16) | AES-256-GCM(PBKDF2-HMAC-SHA256(passph
 
 ## Attestation
 
-The validator master key signs the ASCII string `xrplbak/v1/attest <backup_id> <onchain plain_sha256> <bundle plain_sha256>`. v1 verifies ed25519 keys only. The exact bytes signed by `validator-keys sign` must be confirmed against a live vector before relying on this.
+The validator master key signs the ASCII string `xrplbak/v1/attest <backup_id> <onchain plain_sha256> <bundle plain_sha256>`. v1 verifies ed25519 keys only.
+
+The signed bytes were confirmed against source on 2026-09-15:
+
+- `validator-keys sign <data>` calls `strHex(xrpl::sign(publicKey, secretKey, makeSlice(data)))` (ripple/validator-keys-tool `src/ValidatorKeys.cpp`, `ValidatorKeys::sign`). The argument is signed as its raw bytes. It is not hex-decoded first. The output is hex.
+- `xrpl::sign` signs the message bytes directly for `KeyType::Ed25519`: no domain prefix, no pre-hash (XRPLF/rippled `src/libxrpl/protocol/SecretKey.cpp`). Only the `Secp256k1` branch takes SHA-512Half first.
+- `create_keys` always builds master keys with `KeyType::Ed25519` (ripple/validator-keys-tool `src/ValidatorKeysTool.cpp`, `createKeyFile`), so a key file from any current version verifies here.
+
+So verification is raw ed25519 over the ASCII attest string. `internal/xrpl/sign/vectors_test.go` pins this with a deterministic signature and asserts that the SHA-512Half variant does not verify. Key derivation is pinned against rippled's own 95 ed25519 test vectors in `tests/fixtures/rippled-ed25519-vectors.json`.

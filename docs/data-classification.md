@@ -14,6 +14,10 @@ Whole stanzas: `[validator_token]`, `[validator_key_revocation]`, `[ips_fixed]`,
 
 Single lines inside allowed stanzas: `admin`, `secure_gateway`, `user`, `password`, `admin_user`, `admin_password`, `ssl_key`, `ssl_cert`, `ssl_chain` in `[port_*]`, any private or link-local address, `ip =` with a non-local listen address in `[port_*]`, hex runs of 64+ or base64 runs of 44+ characters outside the key stanzas.
 
+Hostnames follow two rules. A name ending in a suffix reserved for private networks moves wherever it appears: `.local`, `.localhost`, `.localdomain`, `.internal`, `.intranet`, `.lan`, `.home`, `.home.arpa`, `.corp`, `.private`, `.test`, `.onion`. A single-label name with no domain at all moves when it sits in a host-valued stanza (`[ips]`, `[ips_fixed]`, `[sntp_servers]`, `[cluster_nodes]`, `[validator_list_sites]`) or in `ip =` inside `[port_*]`; `localhost` is the one exception.
+
+Known limit: a public FQDN stays on-chain even when it is the operator's own machine, because nothing in the text separates `myvalidator.example.com` from a public hub like `r.ripple.com`. Move those stanzas by hand, or put them in a stanza that is bundle-only.
+
 Each moved line leaves the marker `# xrplbak: content moved to the off-chain bundle` in the on-chain copy so restore can put it back in place, and so a bundle-less restore shows the gap.
 
 ## On-chain allowed (C3)
