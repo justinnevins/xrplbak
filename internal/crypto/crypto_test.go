@@ -179,3 +179,41 @@ func TestKeyFile(t *testing.T) {
 		t.Fatal("wrapped round trip", err)
 	}
 }
+
+// TestAEADTagEnforced pins the property the adversarial corpus cannot
+// isolate end to end: every single-byte change to a ciphertext, body or
+// tag, is refused by each layer, and no plaintext ever comes back.
+func TestAEADTagEnforced(t *testing.T) {
+	r := fixedRoot()
+	e := r.DeriveEpochKey(0)
+	id := e.BackupID([]byte("plain"), 0, 1)
+	k := e.BackupKey(id)
+	plain := bytes.Repeat([]byte{9}, 960)
+	pfx, _ := NewManifestNonce()
+
+	chunkCT := SealChunk(k, id, 1, 3, plain)
+	manCT := SealManifest(k, id, pfx, 1, 3, plain)
+	bundleCT := SealBundle(e.BundleKey(id), id, plain)
+
+	flipEach := func(name string, ct []byte, skip int, open func([]byte) ([]byte, error)) {
+		for i := skip; i < len(ct); i++ {
+			bad := append([]byte{}, ct...)
+			bad[i] ^= 0x01
+			p, err := open(bad)
+			if err == nil {
+				t.Fatalf("%s: byte %d flipped, yet it opened", name, i)
+			}
+			if p != nil {
+				t.Fatalf("%s: byte %d flipped, error returned but plaintext leaked", name, i)
+			}
+		}
+	}
+	flipEach("chunk", chunkCT, 0, func(b []byte) ([]byte, error) { return OpenChunk(k, id, 1, 3, b) })
+	flipEach("manifest", manCT, 0, func(b []byte) ([]byte, error) { return OpenManifest(k, id, pfx, 1, 3, b) })
+	// Bundle: skip the 20-byte header (magic and id are checked, not
+	// authenticated) and the 4-byte frame length.
+	flipEach("bundle", bundleCT, 24, func(b []byte) ([]byte, error) { return OpenBundle(e.BundleKey(id), id, b) })
+	if _, err := OpenBundle(e.BundleKey(id), id, bundleCT); err != nil {
+		t.Fatal("untouched bundle must open", err)
+	}
+}
