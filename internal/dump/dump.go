@@ -56,11 +56,21 @@ func Load(path string) (*Dump, error) {
 	// Every entry must be a transaction object with a hash. A dump that is
 	// partly unreadable is refused whole rather than silently thinned, since
 	// a thinned dump reports a backup as missing when the file is at fault.
+	// Two records under one hash are refused rather than picked from: Tx
+	// resolves a hash case insensitively and returns the first match, so a
+	// second record under that hash is unreachable and the operator cannot
+	// tell which one a verify read. AccountTx would still count both.
+	seen := map[string]int{}
 	for i, t := range d.Txs {
 		rec, err := xrpl.ParseTxJSON(t.TxJSON, nil)
 		if err != nil || t.Hash == "" || rec.Account == "" {
 			return nil, fmt.Errorf("not an xrplbak dump file: %s (entry %d is not a transaction)", path, i+1)
 		}
+		k := strings.ToUpper(t.Hash)
+		if first, dup := seen[k]; dup {
+			return nil, fmt.Errorf("refusing %s: entries %d and %d both claim transaction %s", path, first+1, i+1, t.Hash)
+		}
+		seen[k] = i
 	}
 	return &d, nil
 }
@@ -77,13 +87,16 @@ func (d *Dump) Save(path string) error {
 
 // Merge adds transactions from another dump for the same account.
 func (d *Dump) Merge(o *Dump) {
+	// Keyed the way Tx resolves a hash, so a merge cannot introduce a
+	// duplicate that Load would refuse on the next read.
 	seen := map[string]bool{}
 	for _, t := range d.Txs {
-		seen[t.Hash] = true
+		seen[strings.ToUpper(t.Hash)] = true
 	}
 	for _, t := range o.Txs {
-		if !seen[t.Hash] {
+		if k := strings.ToUpper(t.Hash); !seen[k] {
 			d.Txs = append(d.Txs, t)
+			seen[k] = true
 		}
 	}
 	if o.DID != nil && (d.DID == nil || o.DID.LedgerIndex >= d.DID.LedgerIndex) {
@@ -139,7 +152,13 @@ func (c *Client) LedgerEntryDID(string) ([]byte, error) {
 	if c.D.DID == nil {
 		return nil, xrpl.ErrNotFound
 	}
-	return hex.DecodeString(c.D.DID.Data)
+	// hex.DecodeString hands back the prefix it managed to decode next to
+	// its error. A truncated anchor is not an anchor, so nothing is returned.
+	b, err := hex.DecodeString(c.D.DID.Data)
+	if err != nil {
+		return nil, fmt.Errorf("dump: anchor data is not hex: %w", err)
+	}
+	return b, nil
 }
 
 func (c *Client) AccountInfo(string) (*xrpl.AccountState, error) { return nil, errOffline }
