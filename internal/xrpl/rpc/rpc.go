@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -59,9 +60,13 @@ func (c *Client) call(method string, params map[string]any) (map[string]json.Raw
 	if err := json.Unmarshal(r.Result, &res); err != nil {
 		return nil, fmt.Errorf("rpc %s: bad result: %w", method, err)
 	}
+	// rippled normally marks a failure with status "error", but an
+	// intermediary or a non-rippled endpoint can answer with the error field
+	// alone. An answer carrying an error is never read as an answer.
 	var status string
 	_ = json.Unmarshal(res["status"], &status)
-	if status == "error" {
+	_, hasError := res["error"]
+	if status == "error" || hasError {
 		var e string
 		_ = json.Unmarshal(res["error"], &e)
 		if e == "txnNotFound" || e == "entryNotFound" || e == "actNotFound" {
@@ -188,7 +193,13 @@ func (c *Client) LedgerEntryDID(account string) ([]byte, error) {
 	if node.Data == "" {
 		return nil, xrpl.ErrNotFound
 	}
-	return hex.DecodeString(node.Data)
+	// hex.DecodeString hands back the prefix it managed to decode next to
+	// its error. A truncated anchor is not an anchor, so nothing is returned.
+	b, err := hex.DecodeString(node.Data)
+	if err != nil {
+		return nil, fmt.Errorf("ledger_entry: anchor Data is not hex: %w", err)
+	}
+	return b, nil
 }
 
 // AccountInfo returns sequence and balance from the validated ledger.
@@ -228,8 +239,19 @@ func (c *Client) ServerInfo() (*xrpl.ServerState, error) {
 	if err := json.Unmarshal(raw, &info); err != nil {
 		return nil, err
 	}
+	// Every other method has a required field whose absence is an error.
+	// ServerInfo's fields all have usable zero values, so without this it
+	// would report success for a response carrying no server info at all,
+	// and backup would build LastLedgerSequence from a validated ledger of 0.
+	if info.Info.ValidatedLedger.Seq == 0 {
+		return nil, errors.New("server_info: the response carries no validated ledger")
+	}
 	st := &xrpl.ServerState{ValidatedLedger: info.Info.ValidatedLedger.Seq, CompleteLedgers: info.Info.CompleteLedgers}
-	st.BaseFeeDrops = uint64(info.Info.ValidatedLedger.BaseFee*1_000_000 + 0.5)
+	base, err := feeDrops(info.Info.ValidatedLedger.BaseFee)
+	if err != nil {
+		return nil, fmt.Errorf("server_info: base_fee_xrp: %w", err)
+	}
+	st.BaseFeeDrops = base
 	if st.BaseFeeDrops == 0 {
 		st.BaseFeeDrops = 10
 	}
@@ -241,8 +263,33 @@ func (c *Client) ServerInfo() (*xrpl.ServerState, error) {
 		_ = json.Unmarshal(fee["drops"], &d)
 		var v uint64
 		if _, err := fmt.Sscanf(d.OpenLedgerFee, "%d", &v); err == nil && v > 0 {
+			if v > MaxSaneFeeDrops {
+				return nil, fmt.Errorf("fee: open_ledger_fee is %d drops, above the %d drop sanity bound", v, MaxSaneFeeDrops)
+			}
 			st.OpenLedgerFee = v
 		}
 	}
 	return st, nil
+}
+
+// MaxSaneFeeDrops is one XRP. No network has charged a base fee near it, and
+// a server reporting more is refused rather than handed on: the caller's own
+// --max-fee cap is a policy choice and this is a parse bound.
+const MaxSaneFeeDrops = 1_000_000
+
+// feeDrops converts base_fee_xrp to drops. Converting an out-of-range float
+// to uint64 is implementation defined in Go, so the range is checked first
+// rather than being discovered as a number nobody chose.
+func feeDrops(xrp float64) (uint64, error) {
+	if math.IsNaN(xrp) || math.IsInf(xrp, 0) {
+		return 0, errors.New("not a number")
+	}
+	if xrp < 0 {
+		return 0, fmt.Errorf("negative (%g)", xrp)
+	}
+	drops := xrp*1_000_000 + 0.5
+	if drops > MaxSaneFeeDrops {
+		return 0, fmt.Errorf("%g XRP is above the %d drop sanity bound", xrp, MaxSaneFeeDrops)
+	}
+	return uint64(drops), nil
 }

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/justinnevins/xrplbak/internal/cfg"
 	"github.com/justinnevins/xrplbak/internal/container"
@@ -109,9 +110,24 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, erro
 
 // checkPath accepts only what backup itself writes: a clean absolute path
 // with a real basename and no control bytes.
+//
+// Control bytes are refused because restore prints every path to the
+// operator's terminal next to its completeness state. A newline forges a
+// second line of that report and a cursor escape rewrites the line already
+// printed, so a file that was never recovered can be made to read as
+// complete. The bidirectional format characters are refused for the same
+// reason: they reorder the displayed line without changing its bytes.
 func checkPath(p string) error {
 	bad := func() error { return fmt.Errorf("refused: unsafe path %q in backup", p) }
-	if p == "" || strings.ContainsAny(p, "\x00") {
+	if p == "" {
+		return bad()
+	}
+	for _, r := range p {
+		if r < 0x20 || r == 0x7f || isBidiControl(r) {
+			return bad()
+		}
+	}
+	if !utf8.ValidString(p) {
 		return bad()
 	}
 	slash := filepath.ToSlash(p)
@@ -128,6 +144,18 @@ func checkPath(p string) error {
 		}
 	}
 	return nil
+}
+
+// isBidiControl reports the Unicode format characters that reorder or
+// isolate displayed text. A path is never legitimately written with one.
+func isBidiControl(r rune) bool {
+	switch r {
+	case 0x200e, 0x200f, // LRM, RLM
+		0x202a, 0x202b, 0x202c, 0x202d, 0x202e, // LRE, RLE, PDF, LRO, RLO
+		0x2066, 0x2067, 0x2068, 0x2069: // LRI, RLI, FSI, PDI
+		return true
+	}
+	return false
 }
 
 // contentMatches compares the produced bytes with the manifest hash, which
@@ -209,7 +237,13 @@ func safeRelative(p string) (string, error) {
 	}
 	clean := filepath.Clean("/" + filepath.ToSlash(p))
 	rel := strings.TrimPrefix(clean, "/")
-	if rel == "" || rel == "." || strings.HasPrefix(rel, "..") {
+	// The test is on path components, not on a string prefix: a file
+	// legitimately named "..0" or "..config" begins with two dots without
+	// being a parent reference. checkPath accepts those, and WriteTarget
+	// writes them, so refusing them here made the dry run fail where the
+	// --write it is meant to precede would have succeeded. The component
+	// loop below is what actually refuses a parent reference.
+	if rel == "" || rel == "." {
 		return "", fmt.Errorf("refusing unsafe path %q in backup", p)
 	}
 	for _, part := range strings.Split(rel, "/") {
