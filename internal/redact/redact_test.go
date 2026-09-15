@@ -26,12 +26,13 @@ func TestSplitValidator(t *testing.T) {
 		t.Fatal("role")
 	}
 	on := res.OnChain.Canonical()
-	for _, forbidden := range []string{"eyJ2YWxp", "10.20.30.40", "10.0.0.5", "peer.example.internal", "log_level", "admin ="} {
+	for _, forbidden := range []string{"eyJ2YWxp", "10.20.30.40", "10.0.0.5", "peer.example.internal", "log_level", "admin =", "ntp1.lan", "xrpl-peer2"} {
 		if strings.Contains(on, forbidden) {
 			t.Fatalf("on-chain text contains %q:\n%s", forbidden, on)
 		}
 	}
-	for _, want := range []string{"[node_db]", "online_delete=512", "[port_peer]", "ip = 0.0.0.0", "[validator_token]\n" + MovedMarker, "[peer_private]\n" + MovedMarker} {
+	for _, want := range []string{"[node_db]", "online_delete=512", "[port_peer]", "ip = 0.0.0.0", "[validator_token]\n" + MovedMarker, "[peer_private]\n" + MovedMarker,
+		"time.windows.com", "r.ripple.com 51235"} {
 		if !strings.Contains(on, want) {
 			t.Fatalf("on-chain text lacks %q:\n%s", want, on)
 		}
@@ -118,5 +119,60 @@ func TestCanonicalDeterministic(t *testing.T) {
 	a := cfg.Parse("[b]\n1\n\n[a]\nx # comment\n# c\n").Canonical()
 	if a != "[a]\nx\n\n[b]\n1\n" {
 		t.Fatalf("%q", a)
+	}
+}
+
+// TestHostnameHeuristic pins both halves of the rule: a special-use suffix
+// is internal wherever it appears, and a single-label name in a host-valued
+// stanza is internal. A public FQDN stays on-chain either way.
+func TestHostnameHeuristic(t *testing.T) {
+	cases := []struct {
+		name  string
+		text  string
+		moved bool
+	}{
+		{"public peer stays", "[ips]\nr.ripple.com 51235\n", false},
+		{"bare peer moves", "[ips]\npeer1 51235\n", true},
+		{"internal suffix moves", "[ips]\nhub.internal 51235\n", true},
+		{"corp suffix moves", "[ips]\nhub.corp 51235\n", true},
+		{"corp mid-name stays", "[ips]\nhub.corp.example.com 51235\n", false},
+		{"public sntp stays", "[sntp_servers]\npool.ntp.org\n", false},
+		{"lan sntp moves", "[sntp_servers]\nntp1.lan\n", true},
+		{"public vl site stays", "[validator_list_sites]\nhttps://vl.ripple.com\n", false},
+		{"internal vl site moves", "[validator_list_sites]\nhttps://vl.internal/vl\n", true},
+		{"bare vl site moves", "[validator_list_sites]\nhttp://vlhost:8080/vl\n", true},
+		{"local path moves", "[debug_logfile]\n/var/log/xrpld.local\n", true},
+		{"plain path stays", "[debug_logfile]\n/var/log/xrpld/debug.log\n", false},
+		{"listen localhost stays", "[port_rpc]\nip = localhost\n", false},
+		{"listen hostname moves", "[port_rpc]\nip = myvalidator\n", true},
+		{"listen loopback stays", "[port_rpc]\nip = 127.0.0.1\n", false},
+		{"onion moves", "[ips]\nabcdefghij.onion 51235\n", true},
+	}
+	for _, c := range cases {
+		res, err := Split(cfg.Parse(c.text))
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		got := len(res.Moves) > 0
+		if got != c.moved {
+			t.Fatalf("%s: moved=%v want %v (on-chain: %q)", c.name, got, c.moved, res.OnChain.Canonical())
+		}
+	}
+}
+
+func TestHostValue(t *testing.T) {
+	cases := map[string]string{
+		"ips|r.ripple.com 51235":                 "r.ripple.com",
+		"ips|[2001:db8::1]:51235":                "",
+		"validator_list_sites|https://vl.x.com/": "vl.x.com",
+		"port_rpc|ip = 10.0.0.5":                 "10.0.0.5",
+		"port_rpc|port = 5005":                   "5005",
+		"ips|HOST1.LAN 51235":                    "host1.lan",
+	}
+	for in, want := range cases {
+		stanza, line, _ := strings.Cut(in, "|")
+		if got := hostValue(stanza, line); got != want {
+			t.Fatalf("hostValue(%q, %q) = %q want %q", stanza, line, got, want)
+		}
 	}
 }

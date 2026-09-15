@@ -77,6 +77,24 @@ var keyStanzas = map[string]bool{
 // seed scanner skips only these two; everything else is scanned.
 var blobStanzas = map[string]bool{"validator_token": true, "validator_key_revocation": true}
 
+// Stanzas whose lines are network hosts rather than key=value settings.
+// Their first field is the host, so a single-label name there is an
+// internal name, not a public one.
+var hostValueStanzas = map[string]bool{
+	"ips": true, "ips_fixed": true, "sntp_servers": true,
+	"cluster_nodes": true, "validator_list_sites": true,
+}
+
+// specialUseSuffixes are DNS suffixes reserved for private or internal
+// networks (RFC 6761 .test/.localhost, RFC 6762 .local, RFC 8375
+// .home.arpa, RFC 7686 .onion) plus the conventional corporate ones. A
+// name under any of them describes the operator's own network and never
+// belongs on a public ledger.
+var specialUseSuffixes = []string{
+	".local", ".localhost", ".localdomain", ".internal", ".intranet",
+	".lan", ".home", ".home.arpa", ".corp", ".private", ".test", ".onion",
+}
+
 // Keys inside [port_*] stanzas that carry credentials or key paths.
 var portSecretKeys = map[string]bool{
 	"admin": true, "secure_gateway": true, "user": true, "password": true,
@@ -88,6 +106,7 @@ var (
 	reRFC1751 = regexp.MustCompile(`\b(?:[A-Z]{1,4} ){11}[A-Z]{1,4}\b`)
 	reHex     = regexp.MustCompile(`[0-9A-Fa-f]{64,}`)
 	reBase64  = regexp.MustCompile(`[A-Za-z0-9+/=]{44,}`)
+	reDotted  = regexp.MustCompile(`(?i)\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+\b`)
 	reIP      = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b|\b(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b`)
 )
 
@@ -194,6 +213,9 @@ func lineReason(stanza, line string) string {
 			return "long base64 value"
 		}
 	}
+	if why := hostReason(stanza, key, line); why != "" {
+		return why
+	}
 	for _, m := range reIP.FindAllString(line, -1) {
 		ip := net.ParseIP(m)
 		if ip == nil {
@@ -210,6 +232,76 @@ func lineReason(stanza, line string) string {
 		}
 	}
 	return ""
+}
+
+// hostReason moves lines that name a host on the operator's own network.
+// Two rules, both deliberately conservative: a name under a special-use
+// suffix is internal wherever it appears, and in a host-valued stanza a
+// single-label name has no public domain and so is internal too. A public
+// FQDN stays on-chain even when it is the operator's own machine, because
+// nothing in the text distinguishes it from a public hub; operators who
+// care must move those stanzas by hand.
+func hostReason(stanza, key, line string) string {
+	for _, tok := range reDotted.FindAllString(line, -1) {
+		if specialUse(strings.ToLower(tok)) {
+			return "internal hostname"
+		}
+	}
+	if !hostValueStanzas[stanza] && !(strings.HasPrefix(stanza, "port_") && key == "ip") {
+		return ""
+	}
+	h := hostValue(stanza, line)
+	switch {
+	case h == "" || h == "localhost" || strings.Contains(h, "."):
+		return ""
+	case net.ParseIP(h) != nil:
+		return ""
+	}
+	return "bare hostname with no public domain"
+}
+
+// specialUse reports whether a lowercased dotted name ends in a suffix
+// reserved for private or internal networks.
+func specialUse(name string) bool {
+	for _, suf := range specialUseSuffixes {
+		if strings.HasSuffix(name, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+// hostValue pulls the host out of a host-valued line: the first field of
+// an [ips]-style line, or the value of a [port_*] key, minus any scheme,
+// path, or port. It returns "" for anything it cannot read as one host,
+// including bracketed IPv6, which the IP scanner handles.
+func hostValue(stanza, line string) string {
+	v := strings.TrimSpace(line)
+	if strings.HasPrefix(stanza, "port_") {
+		i := strings.Index(v, "=")
+		if i < 0 {
+			return ""
+		}
+		v = strings.TrimSpace(v[i+1:])
+	}
+	f := strings.Fields(v)
+	if len(f) == 0 {
+		return ""
+	}
+	h := f[0]
+	if i := strings.Index(h, "://"); i >= 0 {
+		h = h[i+3:]
+	}
+	if i := strings.IndexAny(h, "/?#"); i >= 0 {
+		h = h[:i]
+	}
+	if strings.HasPrefix(h, "[") {
+		return ""
+	}
+	if i := strings.LastIndex(h, ":"); i >= 0 && strings.Count(h, ":") == 1 {
+		h = h[:i]
+	}
+	return strings.TrimSuffix(strings.ToLower(h), ".")
 }
 
 // Merge recombines an on-chain file with its bundle for restore. Each
