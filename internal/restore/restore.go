@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -33,7 +34,26 @@ type Plan struct {
 }
 
 // Build merges entries. bundle may be nil when the operator has no bundle.
-func Build(m *manifest.Manifest, onchain, bundle []container.Entry) *Plan {
+// It refuses, before anything is written anywhere, a backup whose paths are
+// not clean absolute paths or whose containers carry a file the manifest
+// does not list. Manifests are authenticated, but a host-key thief could
+// author one, so nothing about paths is trusted.
+func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, error) {
+	listed := map[string]bool{}
+	for _, mf := range m.Files {
+		if err := checkPath(mf.Path); err != nil {
+			return nil, err
+		}
+		listed[mf.Path] = true
+	}
+	for _, e := range append(append([]container.Entry{}, onchain...), bundle...) {
+		if err := checkPath(e.Path); err != nil {
+			return nil, err
+		}
+		if !listed[e.Path] {
+			return nil, fmt.Errorf("refused: the backup carries %q, which is not listed in the manifest", e.Path)
+		}
+	}
 	byPath := map[string]*File{}
 	bundleByPath := map[string]container.Entry{}
 	for _, e := range bundle {
@@ -84,7 +104,30 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) *Plan {
 	if m.Node.Role == "validator" {
 		p.Todo = append(p.Todo, "Run only one validator with this token. Stop the old host before starting the new one")
 	}
-	return p
+	return p, nil
+}
+
+// checkPath accepts only what backup itself writes: a clean absolute path
+// with a real basename and no control bytes.
+func checkPath(p string) error {
+	bad := func() error { return fmt.Errorf("refused: unsafe path %q in backup", p) }
+	if p == "" || strings.ContainsAny(p, "\x00") {
+		return bad()
+	}
+	slash := filepath.ToSlash(p)
+	if !strings.HasPrefix(slash, "/") || slash != path.Clean(slash) {
+		return bad()
+	}
+	base := path.Base(slash)
+	if base == "/" || base == "." || base == ".." {
+		return bad()
+	}
+	for _, part := range strings.Split(slash, "/") {
+		if part == ".." {
+			return bad()
+		}
+	}
+	return nil
 }
 
 // contentMatches compares the produced bytes with the manifest hash, which
@@ -96,16 +139,23 @@ func contentMatches(data []byte, wantHex string) bool {
 
 // WriteTemp writes the plan into a fresh temp dir mirroring absolute paths.
 func (p *Plan) WriteTemp() (string, error) {
-	dir, err := os.MkdirTemp("", "xrplbak-restore-")
-	if err != nil {
-		return "", err
-	}
-	for _, f := range p.Files {
+	rels := make([]string, len(p.Files))
+	for i, f := range p.Files {
+		if err := checkPath(f.Path); err != nil {
+			return "", err
+		}
 		rel, err := safeRelative(f.Path)
 		if err != nil {
 			return "", err
 		}
-		if err := writeFile(filepath.Join(dir, rel), f); err != nil {
+		rels[i] = rel
+	}
+	dir, err := os.MkdirTemp("", "xrplbak-restore-")
+	if err != nil {
+		return "", err
+	}
+	for i, f := range p.Files {
+		if err := writeFile(filepath.Join(dir, rels[i]), f); err != nil {
 			return "", err
 		}
 	}
@@ -123,11 +173,16 @@ func (p *Plan) WriteTarget(targetDir string, force bool) ([]string, error) {
 		return nil, fmt.Errorf("refusing to write under /var/lib (%s); config belongs in /etc", abs)
 	}
 	var written []string
+	seen := map[string]string{}
 	for _, f := range p.Files {
-		base := filepath.Base(filepath.Clean(f.Path))
-		if base == "." || base == ".." || base == "/" || base == string(filepath.Separator) {
-			return nil, fmt.Errorf("refusing unsafe path %q in backup", f.Path)
+		if err := checkPath(f.Path); err != nil {
+			return nil, err
 		}
+		base := filepath.Base(filepath.Clean(f.Path))
+		if first, dup := seen[base]; dup {
+			return nil, fmt.Errorf("%s and %s would land on the same name %s in %s; restore them by hand from the dry-run directory", first, f.Path, base, abs)
+		}
+		seen[base] = f.Path
 		dst := filepath.Join(abs, base)
 		if _, err := os.Lstat(dst); err == nil && !force {
 			return written, fmt.Errorf("%s exists; pass --force to overwrite", dst)

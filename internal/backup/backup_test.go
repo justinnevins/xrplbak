@@ -154,7 +154,10 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := restore.Build(res.Latest.Manifest, entries, bundle)
+	plan, err := restore.Build(res.Latest.Manifest, entries, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(plan.Files) != 2 {
 		t.Fatalf("files %d", len(plan.Files))
 	}
@@ -177,7 +180,10 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	// Without the bundle: files are incomplete and the TODO list leads with the token.
-	partial := restore.Build(res.Latest.Manifest, entries, nil)
+	partial, err := restore.Build(res.Latest.Manifest, entries, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if partial.Files[0].Complete || !strings.Contains(partial.Todo[0], "validator token") {
 		t.Fatalf("bundle-less restore: %+v", partial.Todo)
 	}

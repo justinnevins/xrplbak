@@ -69,6 +69,9 @@ type Result struct {
 	Latest     *Candidate
 	Warnings   []string
 	Rejected   int // manifests that failed authentication
+	// Conflict is set, and Latest left nil, when two different backups
+	// authenticate at the newest (epoch, seq). The tool never picks one.
+	Conflict string
 }
 
 // maxEpochProbe bounds how many epochs the scan tries per manifest when
@@ -149,9 +152,6 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 			}
 			continue
 		}
-		if res.Anchor != nil && res.AnchorOK && res.Anchor.BackupID == k.id {
-			cand.FromAnchor = true
-		}
 		res.Candidates = append(res.Candidates, cand)
 	}
 	sort.SliceStable(res.Candidates, func(i, j int) bool {
@@ -161,19 +161,50 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 		}
 		return a.Ledger > b.Ledger
 	})
-	if len(res.Candidates) > 0 {
-		res.Latest = res.Candidates[0]
-		if len(res.Candidates) > 1 {
-			a, b := res.Candidates[0], res.Candidates[1]
-			if a.Manifest.Epoch == b.Manifest.Epoch && a.Manifest.Seq == b.Manifest.Seq {
-				res.Warnings = append(res.Warnings, fmt.Sprintf("two backups share epoch %d seq %d; using the later one (ledger %d). Check the writer key and re-run backup", a.Manifest.Epoch, a.Manifest.Seq, a.Ledger))
+	// The same backup sealed twice (a resumed run) is one backup: keep the
+	// first landing. Two different backups at one (epoch, seq) are a
+	// conflict the tool refuses to resolve on its own.
+	var uniq []*Candidate
+	seen := map[[16]byte]bool{}
+	for i := len(res.Candidates) - 1; i >= 0; i-- {
+		c := res.Candidates[i]
+		if !seen[c.BackupID] {
+			seen[c.BackupID] = true
+			uniq = append([]*Candidate{c}, uniq...)
+		}
+	}
+	res.Candidates = uniq
+	// The anchor names a backup; its (epoch, seq) must agree with the
+	// manifest it names or the anchor is not trusted for anything.
+	if res.AnchorOK {
+		for _, c := range res.Candidates {
+			if c.BackupID != res.Anchor.BackupID {
+				continue
 			}
+			if c.Manifest.Epoch != res.Anchor.Epoch || c.Manifest.Seq != res.Anchor.Seq {
+				res.AnchorOK = false
+				res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor claims epoch %d seq %d but the manifest it names is epoch %d seq %d; ignoring the anchor", res.Anchor.Epoch, res.Anchor.Seq, c.Manifest.Epoch, c.Manifest.Seq))
+				break
+			}
+			c.FromAnchor = true
+		}
+	}
+	if len(res.Candidates) > 0 {
+		a := res.Candidates[0]
+		if len(res.Candidates) > 1 {
+			b := res.Candidates[1]
+			if a.Manifest.Epoch == b.Manifest.Epoch && a.Manifest.Seq == b.Manifest.Seq {
+				res.Conflict = fmt.Sprintf("two different backups share epoch %d seq %d (ids %s at ledger %d and %s at ledger %d). Someone else may hold the writer key. Refusing to pick one; pass --backup-id to choose, and rotate the key", a.Manifest.Epoch, a.Manifest.Seq, a.Manifest.BackupID[:16], a.Ledger, b.Manifest.BackupID[:16], b.Ledger)
+			}
+		}
+		if res.Conflict == "" {
+			res.Latest = a
 		}
 	}
 	if res.AnchorOK && res.Latest != nil && !res.Latest.FromAnchor {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor points at seq %d but seq %d exists and authenticates; possible rollback by a writer-key holder. Using seq %d.", res.Anchor.Seq, res.Latest.Manifest.Seq, res.Latest.Manifest.Seq))
 	}
-	if res.AnchorOK && res.Latest == nil {
+	if res.AnchorOK && res.Latest == nil && res.Conflict == "" {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor names manifest tx %s (ledger %d) but that transaction is not in the searched range %d to %d", res.Anchor.TxHashHex(), res.Anchor.ManifestLedger, rng.Min, rng.Max))
 	}
 	if res.Rejected > 0 && res.Latest == nil {

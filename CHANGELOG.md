@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Adversarial corpus: 38 table-driven refusal cases in `cmd/xrplbak/corpus_test.go`, each asserting a named exit code. `main` is now `run(args, stdin, stdout, stderr) int` so tests drive the real command surface; flag errors return exit 1 instead of exiting inside the flag package.
+- Breaking: verify and restore refuse when two different backups authenticate at the same epoch and seq (exit 4) instead of picking the later one with a warning. New `--backup-id <hex prefix>` names one explicitly. `backup` picks the next seq above the disputed one.
+- Fix: a DID anchor whose epoch or seq disagrees with the manifest it names is no longer reported as verified.
+- Fix: `restore --write` refused when two files in the backup share a basename. It wrote both to the same target path and listed that path twice as written.
+- Fix: a manifest or container path that is not a clean absolute path is refused with exit 3 before any file is written, including into the dry-run directory. Such paths exited 1 and could leave earlier files in the temp dir.
+- Fix: a container entry the manifest does not list is refused (exit 3) instead of being restored as an extra file.
+- Fix: a dump file with an entry that is not a transaction is refused whole (exit 1). Bad entries were skipped, so the run reported a chunk as missing from history when the file was at fault.
+- Fix: errors while writing the dry-run directory exit 6, not 1.
 - Fuzz targets for config parsing, redaction, the container, chunks, the manifest, the anchor, and the AEAD layer, with a committed corpus and a CI smoke job.
 - Fix: an empty stanza header is no longer moved to the bundle. It held no content, and moving it wrote a marker line the original never had, so restore reported a correct backup as changed.
 - Fix: canonical form is now a fixed point. A nameless stanza with no lines wrote a separator that re-parsing could not recover, so the same config hashed two different ways.

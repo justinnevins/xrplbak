@@ -23,6 +23,7 @@ type sourceFlags struct {
 	rpcURL, dumpPath, account, key, wordsFile, sharesFile *string
 	keyPass                                               *bool
 	epoch                                                 *int
+	backupID                                              *string
 }
 
 func addSourceFlags(fs *flag.FlagSet) *sourceFlags {
@@ -35,7 +36,35 @@ func addSourceFlags(fs *flag.FlagSet) *sourceFlags {
 		wordsFile:  fs.String("words-file", "", "file with the 24 recovery words (default: prompt)"),
 		sharesFile: fs.String("shares-file", "", "file with recovery shares, one per line (default: prompt)"),
 		epoch:      fs.Int("epoch", -1, "epoch to start probing from (default: key file epoch or 0)"),
+		backupID:   fs.String("backup-id", "", "use this backup (hex id or unique prefix) instead of the newest"),
 	}
+}
+
+// choose picks the backup to work with: the newest, or the one named by
+// --backup-id. A conflict at the newest seq is refused unless named.
+func (sf *sourceFlags) choose(res *discover.Result, account string) (*discover.Candidate, error) {
+	if want := strings.ToLower(*sf.backupID); want != "" {
+		var hit *discover.Candidate
+		for _, c := range res.Candidates {
+			if strings.HasPrefix(c.Manifest.BackupID, want) {
+				if hit != nil {
+					return nil, fail(exitUsage, "--backup-id %s matches more than one backup; give more characters", want)
+				}
+				hit = c
+			}
+		}
+		if hit == nil {
+			return nil, fail(exitAuth, "no authenticated backup has id %s", want)
+		}
+		return hit, nil
+	}
+	if res.Conflict != "" {
+		return nil, fail(exitAuth, "%s", res.Conflict)
+	}
+	if res.Latest == nil {
+		return nil, fail(exitAuth, "no backup authenticates for %s with this key in the searched range. Check the account address, the recovery key, and the epoch", account)
+	}
+	return res.Latest, nil
 }
 
 type source struct {
@@ -108,13 +137,14 @@ func cmdVerify(args []string) error {
 		return fail(exitNetwork, "%v", err)
 	}
 	reportRun(res, s.name)
-	if res.Latest == nil {
-		return fail(exitAuth, "no backup authenticates for %s with this key in the searched range. Check the account address, the recovery key, and the epoch", s.account)
+	latest, err := sf.choose(res, s.account)
+	if err != nil {
+		return err
 	}
-	hr("Latest backup")
-	entries, err := discover.Fetch(s.client, s.keys, res, res.Latest)
+	hr("Selected backup")
+	entries, err := discover.Fetch(s.client, s.keys, res, latest)
 	switch {
-	case res.Latest.Manifest.Tombstone:
+	case latest.Manifest.Tombstone:
 		fmt.Fprintln(stdout, "  tombstone: earlier backups are retired")
 	case err != nil:
 		var me *chunk.MissingError
@@ -123,23 +153,23 @@ func cmdVerify(args []string) error {
 		}
 		return fail(exitAuth, "%v", err)
 	default:
-		fmt.Fprintf(stdout, "  on-chain data: complete, %d chunk(s), %d file(s)\n", len(res.Latest.Manifest.OnChain.Chunks), len(entries))
+		fmt.Fprintf(stdout, "  on-chain data: complete, %d chunk(s), %d file(s)\n", len(latest.Manifest.OnChain.Chunks), len(entries))
 	}
-	reportAttestation(res.Latest.Manifest)
+	reportAttestation(latest.Manifest)
 	if *bundlePath != "" {
 		b, err := os.ReadFile(*bundlePath)
 		if err != nil {
 			return err
 		}
-		if _, err := discover.OpenBundle(s.keys, res.Latest, b); err != nil {
+		if _, err := discover.OpenBundle(s.keys, latest, b); err != nil {
 			return fail(exitAuth, "bundle: %v", err)
 		}
 		fmt.Fprintln(stdout, "  bundle:        matches the manifest and decrypts")
 	} else {
-		fmt.Fprintf(stdout, "  bundle:        not checked (pass --bundle FILE); expected sha256 %s\n", res.Latest.Manifest.Bundle.CipherSHA256[:16])
+		fmt.Fprintf(stdout, "  bundle:        not checked (pass --bundle FILE); expected sha256 %s\n", latest.Manifest.Bundle.CipherSHA256[:16])
 	}
 	if *asJSON {
-		fmt.Fprintln(stdout, string(res.Latest.Plain))
+		fmt.Fprintln(stdout, string(latest.Plain))
 	}
 	return nil
 }
@@ -192,9 +222,9 @@ func cmdRestore(args []string) error {
 		return fail(exitNetwork, "%v", err)
 	}
 	reportRun(res, s.name)
-	cand := res.Latest
-	if cand == nil {
-		return fail(exitAuth, "no backup authenticates for %s with this key. Check the account address, the recovery key, and the epoch", s.account)
+	cand, err := sf.choose(res, s.account)
+	if err != nil {
+		return err
 	}
 	if cand.Manifest.Tombstone {
 		if !*allowTomb {
@@ -230,7 +260,10 @@ func cmdRestore(args []string) error {
 			return fail(exitAuth, "bundle: %v", err)
 		}
 	}
-	plan := restore.Build(cand.Manifest, entries, bundle)
+	plan, err := restore.Build(cand.Manifest, entries, bundle)
+	if err != nil {
+		return fail(exitRefused, "%v", err)
+	}
 	hr("Files")
 	for _, f := range plan.Files {
 		state := "complete"
@@ -260,7 +293,7 @@ func cmdRestore(args []string) error {
 	if !*write {
 		dir, err := plan.WriteTemp()
 		if err != nil {
-			return err
+			return fail(exitWrite, "%v", err)
 		}
 		hr("Dry run")
 		fmt.Fprintf(stdout, "  files written under %s\n", dir)

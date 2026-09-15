@@ -364,6 +364,9 @@ func reportRun(res *discover.Result, source string) {
 	for _, w := range res.Warnings {
 		fmt.Fprintln(stdout, "  WARNING:", w)
 	}
+	if res.Conflict != "" {
+		fmt.Fprintln(stdout, "  CONFLICT:", res.Conflict)
+	}
 }
 
 // bindPlan applies discovery to a backup plan's sequencing. The error is

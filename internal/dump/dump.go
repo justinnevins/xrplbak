@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 
@@ -51,6 +52,15 @@ func Load(path string) (*Dump, error) {
 	}
 	if d.V != Version {
 		return nil, errors.New("unsupported dump version")
+	}
+	// Every entry must be a transaction object with a hash. A dump that is
+	// partly unreadable is refused whole rather than silently thinned, since
+	// a thinned dump reports a backup as missing when the file is at fault.
+	for i, t := range d.Txs {
+		rec, err := xrpl.ParseTxJSON(t.TxJSON, nil)
+		if err != nil || t.Hash == "" || rec.Account == "" {
+			return nil, fmt.Errorf("not an xrplbak dump file: %s (entry %d is not a transaction)", path, i+1)
+		}
 	}
 	return &d, nil
 }
