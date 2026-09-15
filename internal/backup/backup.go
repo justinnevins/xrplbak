@@ -478,6 +478,10 @@ func NextSeq(c xrpl.Client, key *crypto.KeyFile, account string) (seq uint32, su
 		// the design, not an attack, so say so instead of alarming.
 		warns = []string{fmt.Sprintf("key file is epoch %d; backups from earlier epochs are not readable with it (expected after a rotation). This backup starts the new epoch at seq 1", key.Epoch)}
 	}
+	if res.Conflict != "" {
+		// Do not add a third backup at the disputed seq. Start above it.
+		return res.Candidates[0].Manifest.Seq + 1, "", append(warns, res.Conflict), nil
+	}
 	if res.Latest == nil {
 		return 1, "", warns, nil
 	}

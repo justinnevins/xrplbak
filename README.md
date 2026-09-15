@@ -76,6 +76,22 @@ The config path is auto-detected (`/etc/xrpld/xrpld.cfg`, then the legacy ripple
 
 Fund the writer account with at least 1.5 XRP: 1 XRP base reserve, 0.2 XRP DID reserve, and fees of about 10 drops per transaction.
 
+### Exit codes
+
+Scripts branch on the code. Humans read the message.
+
+| Code | Meaning |
+|---|---|
+| 0 | done |
+| 1 | usage: bad flags, unreadable input file, or the operator cancelled at a prompt |
+| 2 | network: the XRPL server could not be read |
+| 3 | refused: the input holds something the tool will not handle (a seed, PEM material, a restore marker, an unsafe path in a backup) |
+| 4 | authentication: nothing authenticates with this key, a chunk, manifest, bundle, or share fails its check, or two different backups claim the same seq |
+| 5 | incomplete: a chunk is missing from the searched history, or the newest backup is a tombstone |
+| 6 | write: `--write` refused (file exists, two files share a name, target under /var/lib) or failed |
+
+When two different backups authenticate at the same epoch and seq, verify and restore refuse to pick one. Name the backup with `--backup-id <hex prefix>` after checking who else holds the writer key.
+
 ## Recovery ceremony
 
 1. Get the recovery words (or 2 of 3 shares) and the writer account address from paper.
@@ -94,7 +110,7 @@ A real Testnet backup of the fake example config ships in `examples/testnet-demo
 
 ## Tested
 
-Unit tests cover redaction refusals, chunk sizing, reassembly, truncated history, wrong key, rollback, tombstones, resume, and the HTTP client against a fake ledger. The full flow ran on XRPL Testnet on 2026-09-15 (backup, second backup superseding the first, verify, restore from server, restore from the dump file, `--write`).
+Unit tests cover redaction refusals, chunk sizing, reassembly, truncated history, wrong key, rollback, tombstones, resume, and the HTTP client against a fake ledger. An adversarial corpus (`cmd/xrplbak/corpus_test.go`) drives 38 hostile inputs through the real command surface and asserts the exit code of each refusal: flipped ciphertext per layer, missing, swapped, and foreign chunks, forged and mislabelled anchors, duplicate seq, tombstones, `--write` collisions, hostile manifest paths, damaged dump files, wrong words and corrupt shares. Fuzz targets run in CI. The full flow ran on XRPL Testnet on 2026-09-15 (backup, second backup superseding the first, verify, restore from server, restore from the dump file, `--write`).
 
 ## MainNet vs future amendments
 

@@ -130,11 +130,19 @@ func TestRedactPortCredentialsAndSeedInValidators(t *testing.T) {
 // Finding 7: hostile paths and modes in an authenticated container.
 func TestRestoreRefusesTraversalAndSetuid(t *testing.T) {
 	m := manifestFor("../../etc/cron.d/x", 0o4755)
-	plan := restore.Build(m, []container.Entry{{Path: "../../etc/cron.d/x", Mode: 0o4755, Data: []byte("[a]\nb\n")}}, nil)
-	if _, err := plan.WriteTemp(); err == nil {
-		t.Fatal("traversal must be refused")
+	// Refused at Build since the adversarial corpus; the WriteTemp check
+	// stays as the second line of defense.
+	plan, err := restore.Build(m, []container.Entry{{Path: "../../etc/cron.d/x", Mode: 0o4755, Data: []byte("[a]\nb\n")}}, nil)
+	if err == nil {
+		if _, err := plan.WriteTemp(); err == nil {
+			t.Fatal("traversal must be refused")
+		}
 	}
-	plan = restore.Build(m, []container.Entry{{Path: "/etc/xrpld/x.cfg", Mode: 0o4755, Data: []byte("[a]\nb\n")}}, nil)
+	m = manifestFor("/etc/xrpld/x.cfg", 0o4755)
+	plan, err = restore.Build(m, []container.Entry{{Path: "/etc/xrpld/x.cfg", Mode: 0o4755, Data: []byte("[a]\nb\n")}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir, err := plan.WriteTemp()
 	if err != nil {
 		t.Fatal(err)
