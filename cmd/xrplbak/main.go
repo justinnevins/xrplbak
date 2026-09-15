@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,35 +51,50 @@ Nothing leaves this machine except the XRPL requests you ask for with --rpc.
 Validator master keys, node seeds, wallet.db, and TLS keys are refused on sight.
 `
 
+// Streams are package variables so tests can drive run in-process.
+var (
+	stdin  io.Reader = os.Stdin
+	stdout io.Writer = os.Stdout
+	stderr io.Writer = os.Stderr
+)
+
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
-		os.Exit(exitUsage)
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+// run executes one command and returns its exit code. It never calls
+// os.Exit, so the adversarial corpus can assert codes directly.
+func run(args []string, in io.Reader, out, errOut io.Writer) int {
+	stdin, stdout, stderr = in, out, errOut
+	if len(args) < 1 {
+		fmt.Fprint(stderr, usage)
+		return exitUsage
 	}
 	var err error
-	switch os.Args[1] {
+	switch args[0] {
 	case "init":
-		err = cmdInit(os.Args[2:])
+		err = cmdInit(args[1:])
 	case "redact":
-		err = cmdRedact(os.Args[2:])
+		err = cmdRedact(args[1:])
 	case "backup":
-		err = cmdBackup(os.Args[2:])
+		err = cmdBackup(args[1:])
 	case "verify":
-		err = cmdVerify(os.Args[2:])
+		err = cmdVerify(args[1:])
 	case "restore":
-		err = cmdRestore(os.Args[2:])
+		err = cmdRestore(args[1:])
 	case "version", "--version", "-v":
-		fmt.Println("xrplbak", version)
+		fmt.Fprintln(stdout, "xrplbak", version)
 	case "-h", "--help", "help":
-		fmt.Print(usage)
+		fmt.Fprint(stdout, usage)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", os.Args[1], usage)
-		os.Exit(exitUsage)
+		fmt.Fprintf(stderr, "unknown command %q\n\n%s", args[0], usage)
+		return exitUsage
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(exitCode(err))
+		fmt.Fprintln(stderr, "error:", err)
+		return exitCode(err)
 	}
+	return exitOK
 }
 
 // exitError carries a specific exit code.
@@ -111,12 +127,21 @@ func exitCode(err error) int {
 
 // newFlags builds a flag set that prints its own usage on error.
 func newFlags(name, summary string) *flag.FlagSet {
-	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "xrplbak %s: %s\n\nFlags:\n", name, summary)
+		fmt.Fprintf(stderr, "xrplbak %s: %s\n\nFlags:\n", name, summary)
 		fs.PrintDefaults()
 	}
 	return fs
+}
+
+// parseError maps a flag parse result to an exit. -h is not an error.
+func parseError(err error) error {
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+	return fail(exitUsage, "%v", err)
 }
 
 // Known config locations, newest layout first.
@@ -246,9 +271,9 @@ func recoveryKeys(wordsFile, sharesFile string) (discover.Keys, crypto.RootKey, 
 		}
 		root, err = crypto.Combine(nonEmptyLines(string(b)))
 	default:
-		fmt.Println("Enter the 24 recovery words on one line, or paste recovery shares one per line and finish with an empty line.")
+		fmt.Fprintln(stdout, "Enter the 24 recovery words on one line, or paste recovery shares one per line and finish with an empty line.")
 		var lines []string
-		sc := bufio.NewScanner(os.Stdin)
+		sc := bufio.NewScanner(stdin)
 		for sc.Scan() {
 			l := strings.TrimSpace(sc.Text())
 			if l == "" {
@@ -285,8 +310,8 @@ func nonEmptyLines(s string) []string {
 }
 
 func prompt(msg string) string {
-	fmt.Print(msg)
-	sc := bufio.NewScanner(os.Stdin)
+	fmt.Fprint(stdout, msg)
+	sc := bufio.NewScanner(stdin)
 	sc.Scan()
 	return strings.TrimSpace(sc.Text())
 }
@@ -296,35 +321,35 @@ func confirm(msg string) bool {
 }
 
 func hr(title string) {
-	fmt.Printf("\n== %s ==\n", title)
+	fmt.Fprintf(stdout, "\n== %s ==\n", title)
 }
 
 // summarizeMoves prints the redaction report in operator language.
 func summarizeMoves(moves []redact.Move) {
 	if len(moves) == 0 {
-		fmt.Println("  nothing moved: every stanza is allowed on-chain")
+		fmt.Fprintln(stdout, "  nothing moved: every stanza is allowed on-chain")
 		return
 	}
 	for _, m := range moves {
-		fmt.Printf("  [%s]: %d line(s) -> bundle (%s)\n", m.Stanza, m.Lines, m.Reason)
+		fmt.Fprintf(stdout, "  [%s]: %d line(s) -> bundle (%s)\n", m.Stanza, m.Lines, m.Reason)
 	}
 }
 
 // reportRun prints discovery output shared by verify and restore.
 func reportRun(res *discover.Result, source string) {
 	hr("Discovery")
-	fmt.Printf("  source:   %s\n", source)
-	fmt.Printf("  account:  %s\n", res.Account)
-	fmt.Printf("  searched: ledgers %d to %d\n", res.Range.Min, res.Range.Max)
+	fmt.Fprintf(stdout, "  source:   %s\n", source)
+	fmt.Fprintf(stdout, "  account:  %s\n", res.Account)
+	fmt.Fprintf(stdout, "  searched: ledgers %d to %d\n", res.Range.Min, res.Range.Max)
 	switch {
 	case res.Anchor == nil:
-		fmt.Println("  anchor:   none (DID entry absent)")
+		fmt.Fprintln(stdout, "  anchor:   none (DID entry absent)")
 	case res.AnchorOK:
-		fmt.Printf("  anchor:   ok, epoch %d seq %d\n", res.Anchor.Epoch, res.Anchor.Seq)
+		fmt.Fprintf(stdout, "  anchor:   ok, epoch %d seq %d\n", res.Anchor.Epoch, res.Anchor.Seq)
 	default:
-		fmt.Println("  anchor:   present but NOT verified")
+		fmt.Fprintln(stdout, "  anchor:   present but NOT verified")
 	}
-	fmt.Printf("  backups:  %d authenticated, %d rejected\n", len(res.Candidates), res.Rejected)
+	fmt.Fprintf(stdout, "  backups:  %d authenticated, %d rejected\n", len(res.Candidates), res.Rejected)
 	for _, c := range res.Candidates {
 		mark := " "
 		if c == res.Latest {
@@ -334,10 +359,10 @@ func reportRun(res *discover.Result, source string) {
 		if c.Manifest.Tombstone {
 			kind = "tombstone"
 		}
-		fmt.Printf("  %s epoch %d seq %-4d %s  %s  id %s\n", mark, c.Epoch, c.Manifest.Seq, c.Manifest.Created, kind, c.Manifest.BackupID[:16])
+		fmt.Fprintf(stdout, "  %s epoch %d seq %-4d %s  %s  id %s\n", mark, c.Epoch, c.Manifest.Seq, c.Manifest.Created, kind, c.Manifest.BackupID[:16])
 	}
 	for _, w := range res.Warnings {
-		fmt.Println("  WARNING:", w)
+		fmt.Fprintln(stdout, "  WARNING:", w)
 	}
 }
 

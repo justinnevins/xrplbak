@@ -66,7 +66,7 @@ func (sf *sourceFlags) resolve() (*source, error) {
 			if s.account == "" {
 				s.account = sign.EncodeAddress(kf.AccountID[:])
 			}
-			fmt.Printf("using key file %s (epoch %d)\n", kp, kf.Epoch)
+			fmt.Fprintf(stdout, "using key file %s (epoch %d)\n", kp, kf.Epoch)
 		} else if *sf.key != "" {
 			return nil, kerr
 		}
@@ -95,7 +95,9 @@ func cmdVerify(args []string) error {
 	sf := addSourceFlags(fs)
 	bundlePath := fs.String("bundle", "", "also check this bundle file against the latest manifest")
 	asJSON := fs.Bool("json", false, "print the latest manifest as JSON")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return parseError(err)
+	}
 
 	s, err := sf.resolve()
 	if err != nil {
@@ -113,7 +115,7 @@ func cmdVerify(args []string) error {
 	entries, err := discover.Fetch(s.client, s.keys, res, res.Latest)
 	switch {
 	case res.Latest.Manifest.Tombstone:
-		fmt.Println("  tombstone: earlier backups are retired")
+		fmt.Fprintln(stdout, "  tombstone: earlier backups are retired")
 	case err != nil:
 		var me *chunk.MissingError
 		if errors.As(err, &me) {
@@ -121,7 +123,7 @@ func cmdVerify(args []string) error {
 		}
 		return fail(exitAuth, "%v", err)
 	default:
-		fmt.Printf("  on-chain data: complete, %d chunk(s), %d file(s)\n", len(res.Latest.Manifest.OnChain.Chunks), len(entries))
+		fmt.Fprintf(stdout, "  on-chain data: complete, %d chunk(s), %d file(s)\n", len(res.Latest.Manifest.OnChain.Chunks), len(entries))
 	}
 	reportAttestation(res.Latest.Manifest)
 	if *bundlePath != "" {
@@ -132,12 +134,12 @@ func cmdVerify(args []string) error {
 		if _, err := discover.OpenBundle(s.keys, res.Latest, b); err != nil {
 			return fail(exitAuth, "bundle: %v", err)
 		}
-		fmt.Println("  bundle:        matches the manifest and decrypts")
+		fmt.Fprintln(stdout, "  bundle:        matches the manifest and decrypts")
 	} else {
-		fmt.Printf("  bundle:        not checked (pass --bundle FILE); expected sha256 %s\n", res.Latest.Manifest.Bundle.CipherSHA256[:16])
+		fmt.Fprintf(stdout, "  bundle:        not checked (pass --bundle FILE); expected sha256 %s\n", res.Latest.Manifest.Bundle.CipherSHA256[:16])
 	}
 	if *asJSON {
-		fmt.Println(string(res.Latest.Plain))
+		fmt.Fprintln(stdout, string(res.Latest.Plain))
 	}
 	return nil
 }
@@ -149,19 +151,19 @@ func reportAttestation(m *manifest.Manifest) {
 	a := m.Attestation
 	pub, err := sign.DecodeNodePublic(a.VPK)
 	if err != nil {
-		fmt.Println("  attestation:   present but the key is malformed")
+		fmt.Fprintln(stdout, "  attestation:   present but the key is malformed")
 		return
 	}
 	if pub[0] != 0xED {
-		fmt.Println("  attestation:   present, unverifiable in v1 (secp256k1 validator key)")
+		fmt.Fprintln(stdout, "  attestation:   present, unverifiable in v1 (secp256k1 validator key)")
 		return
 	}
 	sig, _ := decodeHex(a.Sig)
 	msg := manifest.AttestString(m.BackupID, m.OnChain.PlainSHA256, m.Bundle.PlainSHA256)
 	if sign.VerifyEd25519(pub, []byte(msg), sig) {
-		fmt.Printf("  attestation:   valid ed25519 signature by %s\n", a.VPK)
+		fmt.Fprintf(stdout, "  attestation:   valid ed25519 signature by %s\n", a.VPK)
 	} else {
-		fmt.Printf("  attestation:   INVALID signature for %s\n", a.VPK)
+		fmt.Fprintf(stdout, "  attestation:   INVALID signature for %s\n", a.VPK)
 	}
 }
 
@@ -174,7 +176,9 @@ func cmdRestore(args []string) error {
 	force := fs.Bool("force", false, "with --write: overwrite existing files")
 	allowTomb := fs.Bool("allow-tombstoned", false, "restore the newest non-tombstone backup even if a tombstone is newer")
 	asJSON := fs.Bool("json", false, "print the file report as JSON")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return parseError(err)
+	}
 
 	if *write && *target == "" {
 		return fail(exitUsage, "--write needs --target DIR")
@@ -233,12 +237,12 @@ func cmdRestore(args []string) error {
 		if !f.Complete {
 			state = "INCOMPLETE"
 		}
-		fmt.Printf("  %-40s %s  (%s, mode %04o)\n", f.Path, state, f.Source, f.Mode)
+		fmt.Fprintf(stdout, "  %-40s %s  (%s, mode %04o)\n", f.Path, state, f.Source, f.Mode)
 	}
 	if len(plan.Todo) > 0 {
 		hr("Before starting the server")
 		for i, t := range plan.Todo {
-			fmt.Printf("  %d. %s\n", i+1, t)
+			fmt.Fprintf(stdout, "  %d. %s\n", i+1, t)
 		}
 	}
 	if *asJSON {
@@ -251,7 +255,7 @@ func cmdRestore(args []string) error {
 			rows = append(rows, row{f.Path, f.Source, f.Complete})
 		}
 		b, _ := json.MarshalIndent(map[string]any{"files": rows, "todo": plan.Todo}, "", " ")
-		fmt.Println(string(b))
+		fmt.Fprintln(stdout, string(b))
 	}
 	if !*write {
 		dir, err := plan.WriteTemp()
@@ -259,8 +263,8 @@ func cmdRestore(args []string) error {
 			return err
 		}
 		hr("Dry run")
-		fmt.Printf("  files written under %s\n", dir)
-		fmt.Println("  Inspect them. Then re-run with --write --target /etc/xrpld to place them.")
+		fmt.Fprintf(stdout, "  files written under %s\n", dir)
+		fmt.Fprintln(stdout, "  Inspect them. Then re-run with --write --target /etc/xrpld to place them.")
 		return nil
 	}
 	if !confirm(fmt.Sprintf("  Write %d file(s) into %s?", len(plan.Files), *target)) {
@@ -271,7 +275,7 @@ func cmdRestore(args []string) error {
 		return fail(exitWrite, "%v", err)
 	}
 	hr("Written")
-	fmt.Println("  " + strings.Join(written, "\n  "))
+	fmt.Fprintln(stdout, "  "+strings.Join(written, "\n  "))
 	return nil
 }
 
