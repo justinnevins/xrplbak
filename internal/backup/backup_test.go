@@ -171,7 +171,8 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, fixtures+"validator-full.cfg")); err != nil {
+	absFixture, _ := filepath.Abs(fixtures + "validator-full.cfg")
+	if _, err := os.Stat(filepath.Join(dir, absFixture)); err != nil {
 		t.Fatal("temp write", err)
 	}
 

@@ -60,6 +60,7 @@ sha256sum -c SHA256SUMS
 
 ```
 xrplbak init                              # once, on any machine: words, key file, writer account
+xrplbak init --rotate                     # after a host compromise: next epoch key from the words
 xrplbak redact                            # see the split; nothing is written or sent
 xrplbak backup                            # dry run: plan, bundle file, attest string
 xrplbak backup --submit --rpc mainnet     # writes chunks, manifest, anchor; saves dump + bundle

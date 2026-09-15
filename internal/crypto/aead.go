@@ -4,15 +4,17 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io"
 )
 
-// AES-256-GCM: 12-byte nonce, 16-byte tag. Nonces are counters, never
-// random. Every key is used for exactly one backup_id, and backup_id
-// commits to the plaintext, so a (key, nonce) pair repeats only when the
-// message is byte-identical.
+// AES-256-GCM: 12-byte nonce, 16-byte tag. Chunk and bundle nonces are
+// counters: their key is used for exactly one backup_id, and backup_id
+// commits to their plaintext, so a (key, nonce) pair repeats only when the
+// message is byte-identical. Manifest nonces carry a random prefix because
+// the manifest is not committed by backup_id (see ManifestNonceLen).
 const (
 	TagLen   = 16
 	nonceLen = 12
@@ -68,15 +70,41 @@ func OpenChunk(key [KeyLen]byte, backupID []byte, idx, total uint16, ct []byte) 
 	return p, nil
 }
 
-// SealManifest encrypts manifest part idx of total. Manifest nonces count
-// down from 0xFFFFFFFF so they never meet chunk nonces under the same key.
-func SealManifest(key [KeyLen]byte, backupID []byte, idx, total uint16, plain []byte) []byte {
-	return gcm(key).Seal(nil, counterNonce(0xFFFFFFFF-uint32(idx)), plain, chunkAAD(domainManifest, backupID, idx, total))
+// ManifestNonceLen is the random prefix carried in every manifest memo.
+// The manifest is not committed by backup_id (it holds tx hashes and a
+// timestamp), so a resumed or repeated run would otherwise re-encrypt a
+// different manifest under the same (key, nonce). A fresh random prefix per
+// sealing run plus the part index makes every manifest nonce unique.
+const ManifestNonceLen = 10
+
+// NewManifestNonce draws the random prefix for one sealing run.
+func NewManifestNonce() ([]byte, error) {
+	n := make([]byte, ManifestNonceLen)
+	_, err := rand.Read(n)
+	return n, err
+}
+
+func manifestNonce(prefix []byte, idx uint16) []byte {
+	n := make([]byte, nonceLen)
+	copy(n, prefix)
+	binary.BigEndian.PutUint16(n[ManifestNonceLen:], idx)
+	return n
+}
+
+// SealManifest encrypts manifest part idx of total under nonce prefix||idx.
+func SealManifest(key [KeyLen]byte, backupID, prefix []byte, idx, total uint16, plain []byte) []byte {
+	if len(prefix) != ManifestNonceLen {
+		panic("manifest nonce prefix must be 10 bytes")
+	}
+	return gcm(key).Seal(nil, manifestNonce(prefix, idx), plain, chunkAAD(domainManifest, backupID, idx, total))
 }
 
 // OpenManifest decrypts and authenticates one manifest part.
-func OpenManifest(key [KeyLen]byte, backupID []byte, idx, total uint16, ct []byte) ([]byte, error) {
-	p, err := gcm(key).Open(nil, counterNonce(0xFFFFFFFF-uint32(idx)), ct, chunkAAD(domainManifest, backupID, idx, total))
+func OpenManifest(key [KeyLen]byte, backupID, prefix []byte, idx, total uint16, ct []byte) ([]byte, error) {
+	if len(prefix) != ManifestNonceLen {
+		return nil, ErrAuth
+	}
+	p, err := gcm(key).Open(nil, manifestNonce(prefix, idx), ct, chunkAAD(domainManifest, backupID, idx, total))
 	if err != nil {
 		return nil, ErrAuth
 	}
@@ -148,6 +176,9 @@ func OpenBundle(key [KeyLen]byte, backupID []byte, stream []byte) ([]byte, error
 			return nil, fmt.Errorf("bundle truncated: no final frame")
 		} else if err != nil {
 			return nil, err
+		}
+		if l > FrameLen+TagLen {
+			return nil, fmt.Errorf("bundle frame %d claims %d bytes; the limit is %d", i, l, FrameLen+TagLen)
 		}
 		ct := make([]byte, l)
 		if _, err := io.ReadFull(r, ct); err != nil {

@@ -1,7 +1,13 @@
 // Package chunk maps ciphertext to and from memo payloads.
 //
-// MemoData layout: u8 version=1 | backup_id(16) | u16 idx | u16 total | ciphertext
-// (21 header bytes + 976 ciphertext bytes = 997; serialized Memos = 1018 <= 1024)
+// Chunk MemoData:    u8 version=1 | backup_id(16) | u16 idx | u16 total | ciphertext
+//
+//	(21 header bytes + 976 ciphertext bytes = 997; serialized Memos = 1018 <= 1024)
+//
+// Manifest MemoData: u8 version=1 | backup_id(16) | u16 idx | u16 total | nonce(10) | ciphertext
+//
+//	(31 header bytes + at most 960 ciphertext bytes = 991; serialized Memos = 1012)
+//
 // MemoType is "xrplbak/v1/c" for on-chain container chunks and
 // "xrplbak/v1/m" for manifest parts. No MemoFormat.
 package chunk
@@ -21,6 +27,9 @@ const (
 	TypeManifest = "xrplbak/v1/m"
 	Version      = 1
 	headerLen    = 1 + 16 + 2 + 2
+	// ManifestPartLen is the plaintext per manifest part, smaller than a
+	// chunk to make room for the nonce prefix in the header.
+	ManifestPartLen = container.BlockLen - 16
 	// MaxChunks caps on-chain container size at 8 x 960 bytes of plaintext.
 	MaxChunks = 8
 )
@@ -31,19 +40,25 @@ type Payload struct {
 	BackupID   [16]byte
 	Index      uint16
 	Total      uint16
+	Nonce      [crypto.ManifestNonceLen]byte // manifest parts only
 	Ciphertext []byte
 }
 
-// Encode builds the memo for one ciphertext piece.
-func Encode(typ string, backupID []byte, idx, total uint16, ct []byte) (codec.Memo, error) {
+// Encode builds the memo for one ciphertext piece. nonce is required for
+// manifest parts and must be empty for chunks.
+func Encode(typ string, backupID []byte, idx, total uint16, nonce, ct []byte) (codec.Memo, error) {
 	if len(backupID) != 16 {
 		return codec.Memo{}, errors.New("backup id must be 16 bytes")
 	}
-	data := make([]byte, 0, headerLen+len(ct))
+	if (typ == TypeManifest) != (len(nonce) == crypto.ManifestNonceLen) {
+		return codec.Memo{}, errors.New("manifest parts carry a 10-byte nonce, chunks carry none")
+	}
+	data := make([]byte, 0, headerLen+len(nonce)+len(ct))
 	data = append(data, Version)
 	data = append(data, backupID...)
 	data = binary.BigEndian.AppendUint16(data, idx)
 	data = binary.BigEndian.AppendUint16(data, total)
+	data = append(data, nonce...)
 	data = append(data, ct...)
 	m := codec.Memo{Type: []byte(typ), Data: data}
 	if _, err := codec.SerializeMemos([]codec.Memo{m}); err != nil {
@@ -65,7 +80,18 @@ func Decode(m codec.Memo) (Payload, bool) {
 	copy(p.BackupID[:], m.Data[1:17])
 	p.Index = binary.BigEndian.Uint16(m.Data[17:19])
 	p.Total = binary.BigEndian.Uint16(m.Data[19:21])
-	p.Ciphertext = m.Data[headerLen:]
+	rest := m.Data[headerLen:]
+	if typ == TypeManifest {
+		if len(rest) < crypto.ManifestNonceLen+crypto.TagLen {
+			return Payload{}, false
+		}
+		copy(p.Nonce[:], rest[:crypto.ManifestNonceLen])
+		rest = rest[crypto.ManifestNonceLen:]
+	}
+	if p.Total == 0 || p.Index >= p.Total {
+		return Payload{}, false
+	}
+	p.Ciphertext = rest
 	return p, true
 }
 

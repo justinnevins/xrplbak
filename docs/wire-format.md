@@ -13,7 +13,7 @@ K_anchor = HKDF-SHA256(K_e,  Salt, "anchor")
 backup_id = HMAC-SHA256(K_e, onchain_packed || bundle_packed || u32 epoch || u32 seq)[0:16]
 ```
 
-RRK is 32 random bytes shown as 24 BIP39 words or split with Shamir over GF(2^8) (33-byte shares, 2-byte SHA-256 checksum, Crockford base32 in groups of 7).
+RRK is 32 random bytes shown as 24 BIP39 words or split with Shamir over GF(2^8). Each share is `u8 threshold | split_id(2) | 33 Shamir bytes | sha256(prefix)[0:2]`, Crockford base32 in groups of 7. Combine refuses too few shares or shares from different splits.
 
 ## Container (XBC1)
 
@@ -25,12 +25,12 @@ Then deflate level 9, then pad to a multiple of 960 bytes with the pad length in
 
 ## AEAD
 
-AES-256-GCM. 12-byte nonces are counters. Keys are unique per backup_id, and backup_id commits to the plaintext, so a repeated (key, nonce) implies an identical message.
+AES-256-GCM. Chunk and bundle nonces are counters: their keys are unique per backup_id, and backup_id commits to their plaintext, so a repeated (key, nonce) implies an identical message. The manifest is not committed by backup_id (it holds tx hashes and a timestamp), so each sealing run draws a random 10-byte nonce prefix that travels in the memo header; a resumed run reuses the manifest already on the ledger instead of sealing again.
 
 | Object | Key | Nonce | AAD |
 |---|---|---|---|
 | chunk i of n | K_b | u32 i, zero padded | "xrplbak/v1/chunk" \| backup_id \| u16 i \| u16 n |
-| manifest part i of n | K_b | u32 (0xFFFFFFFF - i) | "xrplbak/v1/manifest" \| backup_id \| u16 i \| u16 n |
+| manifest part i of n | K_b | random(10) \| u16 i | "xrplbak/v1/manifest" \| backup_id \| u16 i \| u16 n |
 | bundle frame i | K_bundle | u32 i \| 7 zero \| u8 final | "xrplbak/v1/bundle" \| backup_id |
 
 Bundle stream: `"XBK1" | backup_id(16) | frames`, frame = `u32 len | ciphertext`. Frames hold 64 KiB of plaintext. The final flag in the nonce makes truncation fail.
@@ -40,9 +40,10 @@ Bundle stream: `"XBK1" | backup_id(16) | frames`, frame = `u32 len | ciphertext`
 AccountSet with no fields carries one memo. MemoType is `xrplbak/v1/c` (chunk) or `xrplbak/v1/m` (manifest). No MemoFormat.
 
 ```
-MemoData = u8 1 | backup_id(16) | u16 index | u16 total | ciphertext
+chunk:    MemoData = u8 1 | backup_id(16) | u16 index | u16 total | ciphertext
+manifest: MemoData = u8 1 | backup_id(16) | u16 index | u16 total | nonce(10) | ciphertext
 ```
-Chunk plaintext is 960 bytes, ciphertext 976, MemoData 997, serialized Memos 1018 bytes (limit 1024). At most 8 chunks per backup.
+Chunk plaintext is 960 bytes, ciphertext 976, MemoData 997, serialized Memos 1018 bytes (limit 1024). At most 8 chunks per backup. Manifest parts hold 944 plaintext bytes (MemoData at most 991). Discovery groups manifest parts by (backup_id, nonce) and keeps every ciphertext seen per index, so junk posted with a stolen writer key cannot shadow a real part.
 
 ## Manifest (plaintext JSON, sorted keys, no whitespace)
 

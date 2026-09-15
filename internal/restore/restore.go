@@ -101,8 +101,11 @@ func (p *Plan) WriteTemp() (string, error) {
 		return "", err
 	}
 	for _, f := range p.Files {
-		dst := filepath.Join(dir, filepath.FromSlash(strings.TrimPrefix(f.Path, "/")))
-		if err := writeFile(dst, f); err != nil {
+		rel, err := safeRelative(f.Path)
+		if err != nil {
+			return "", err
+		}
+		if err := writeFile(filepath.Join(dir, rel), f); err != nil {
 			return "", err
 		}
 	}
@@ -121,7 +124,11 @@ func (p *Plan) WriteTarget(targetDir string, force bool) ([]string, error) {
 	}
 	var written []string
 	for _, f := range p.Files {
-		dst := filepath.Join(abs, filepath.Base(f.Path))
+		base := filepath.Base(filepath.Clean(f.Path))
+		if base == "." || base == ".." || base == "/" || base == string(filepath.Separator) {
+			return nil, fmt.Errorf("refusing unsafe path %q in backup", f.Path)
+		}
+		dst := filepath.Join(abs, base)
 		if _, err := os.Lstat(dst); err == nil && !force {
 			return written, fmt.Errorf("%s exists; pass --force to overwrite", dst)
 		}
@@ -136,11 +143,34 @@ func (p *Plan) WriteTarget(targetDir string, force bool) ([]string, error) {
 	return written, nil
 }
 
+// safeRelative turns a stored absolute path into a relative one that
+// cannot escape the temp dir. Manifests are authenticated, but a host key
+// thief could author one, so paths are never trusted.
+func safeRelative(p string) (string, error) {
+	for _, part := range strings.Split(filepath.ToSlash(p), "/") {
+		if part == ".." {
+			return "", fmt.Errorf("refusing unsafe path %q in backup", p)
+		}
+	}
+	clean := filepath.Clean("/" + filepath.ToSlash(p))
+	rel := strings.TrimPrefix(clean, "/")
+	if rel == "" || rel == "." || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("refusing unsafe path %q in backup", p)
+	}
+	for _, part := range strings.Split(rel, "/") {
+		if part == ".." {
+			return "", fmt.Errorf("refusing unsafe path %q in backup", p)
+		}
+	}
+	return filepath.FromSlash(rel), nil
+}
+
 func writeFile(dst string, f File) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
-	mode := os.FileMode(f.Mode)
+	// Permission bits only. No setuid, setgid, or sticky bits from a backup.
+	mode := os.FileMode(f.Mode) & 0o777
 	if mode == 0 {
 		mode = 0o600
 	}
