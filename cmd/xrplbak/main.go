@@ -58,6 +58,33 @@ var (
 	stderr io.Writer = os.Stderr
 )
 
+// stdinLines is the one buffered reader every prompt shares. Giving each
+// prompt its own bufio.Scanner looks harmless and is not: a Scanner reads
+// ahead into its own buffer, so the first question swallows the answers to
+// all the later ones. A terminal hides it, because each read returns a
+// single line. A pipe or a file does not.
+var stdinLines *bufio.Reader
+
+// setStdin points the prompts at r and discards anything buffered from a
+// previous reader.
+func setStdin(r io.Reader) {
+	stdin = r
+	stdinLines = bufio.NewReader(r)
+}
+
+// readLine returns the next line of input without its terminator, and
+// whether there was one.
+func readLine() (string, bool) {
+	if stdinLines == nil {
+		setStdin(stdin)
+	}
+	line, err := stdinLines.ReadString('\n')
+	if line == "" && err != nil {
+		return "", false
+	}
+	return strings.TrimRight(line, "\r\n"), true
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
@@ -65,7 +92,8 @@ func main() {
 // run executes one command and returns its exit code. It never calls
 // os.Exit, so the adversarial corpus can assert codes directly.
 func run(args []string, in io.Reader, out, errOut io.Writer) int {
-	stdin, stdout, stderr = in, out, errOut
+	setStdin(in)
+	stdout, stderr = out, errOut
 	if len(args) < 1 {
 		fmt.Fprint(stderr, usage)
 		return exitUsage
@@ -273,9 +301,12 @@ func recoveryKeys(wordsFile, sharesFile string) (discover.Keys, crypto.RootKey, 
 	default:
 		fmt.Fprintln(stdout, "Enter the 24 recovery words on one line, or paste recovery shares one per line and finish with an empty line.")
 		var lines []string
-		sc := bufio.NewScanner(stdin)
-		for sc.Scan() {
-			l := strings.TrimSpace(sc.Text())
+		for {
+			raw, ok := readLine()
+			if !ok {
+				break
+			}
+			l := strings.TrimSpace(raw)
 			if l == "" {
 				break
 			}
@@ -311,9 +342,8 @@ func nonEmptyLines(s string) []string {
 
 func prompt(msg string) string {
 	fmt.Fprint(stdout, msg)
-	sc := bufio.NewScanner(stdin)
-	sc.Scan()
-	return strings.TrimSpace(sc.Text())
+	line, _ := readLine()
+	return strings.TrimSpace(line)
 }
 
 func confirm(msg string) bool {
