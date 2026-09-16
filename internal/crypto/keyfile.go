@@ -83,7 +83,11 @@ func DecodeKeyFile(b []byte, passphrase []byte) (*KeyFile, error) {
 		copy(key[:], wk)
 		plain, err := gcm(key).Open(nil, make([]byte, nonceLen), b[21:], keyfileAAD)
 		if err != nil {
-			return nil, errors.New("wrong key file passphrase")
+			// AEAD cannot tell these apart, so the message must not
+			// pick one. Naming only the passphrase sent an operator with
+			// the right passphrase and a damaged file looking in the
+			// wrong place, in the middle of a recovery.
+			return nil, errors.New("wrong key file passphrase, or the key file is damaged")
 		}
 		b = plain
 	}
