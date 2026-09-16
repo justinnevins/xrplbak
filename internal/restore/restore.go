@@ -99,7 +99,14 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, erro
 			p.Todo = append(p.Todo, "Regenerate the validator token from the master key (validator-keys create_token) and add [validator_token] to the config")
 		}
 		for _, r := range m.Redactions {
-			p.Todo = append(p.Todo, fmt.Sprintf("Re-enter [%s]: %d line(s) were kept only in the off-chain bundle", r.Stanza, r.Lines))
+			// Content before the first header has no stanza name. Printing
+			// it as "[]" reads like a template that failed to fill in, and
+			// the first cold-read evaluation had to reverse-engineer it.
+			where := "[" + r.Stanza + "]"
+			if r.Stanza == "" {
+				where = "the lines before the first stanza"
+			}
+			p.Todo = append(p.Todo, fmt.Sprintf("Re-enter %s: %d line(s) were kept only in the off-chain bundle", where, r.Lines))
 		}
 	}
 	if m.Node.Role == "validator" {
