@@ -113,7 +113,7 @@ When two different backups authenticate at the same epoch and seq, verify and re
 2. Get the bundle file if you have it. Without it, restore still works, but the validator token and private topology must be re-entered.
 3. On the new host, build xrplbak from the tagged source.
 4. Run `xrplbak restore --rpc mainnet --bundle <file>`. Enter the words when asked. Read the report and the temp files.
-5. If the report says INCOMPLETE, do the listed steps: regenerate the validator token from the master key, re-enter `[ips_fixed]` and admin lists.
+5. If the report marks a file PARTIAL, do the listed steps: regenerate the validator token from the master key, re-enter `[ips_fixed]` and admin lists. PARTIAL means content is missing from the file, not that the backup is damaged. That is exit code 5, and it is a different thing.
 6. Stop the old host if it still exists. One token, one running validator.
 7. Run `xrplbak restore ... --write --target /etc/xrpld`.
 8. Start xrpld. Confirm `server_info` shows the expected `pubkey_validator`.

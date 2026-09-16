@@ -110,6 +110,13 @@ func (sf *sourceFlags) resolve() (*source, error) {
 	if s.account == "" {
 		s.account = prompt("Writer account address (r...): ")
 	}
+	if s.account == "" {
+		// Reaching here means no --account, no key file to take it from,
+		// and nothing on stdin. Passing the empty string on to the address
+		// decoder made the tool report a malformed address when none had
+		// been supplied at all. Both cold-read evaluators hit this.
+		return nil, fail(exitUsage, "no writer account: pass --account r..., or --key with the key file that holds it. It is on the paper card beside the recovery words")
+	}
 	if _, derr := sign.DecodeAddress(s.account); derr != nil {
 		return nil, fail(exitUsage, "%v", derr)
 	}
@@ -272,12 +279,25 @@ func cmdRestore(args []string) error {
 		return fail(exitRefused, "%v", err)
 	}
 	hr("Files")
+	partial := false
 	for _, f := range plan.Files {
+		// "INCOMPLETE" is the word the exit-code table uses for a missing
+		// on-chain chunk, which is a broken backup and exits 5. A restore
+		// without the bundle is neither: it is the expected, documented
+		// case and it exits 0. Using one word for both had the second
+		// cold-read evaluator reading the exit-code table twice to work
+		// out whether it had broken something.
 		state := "complete"
 		if !f.Complete {
-			state = "INCOMPLETE"
+			state = "PARTIAL"
+			partial = true
 		}
 		fmt.Fprintf(stdout, "  %-40s %s  (%s, mode %04o)\n", f.Path, state, f.Source, f.Mode)
+	}
+	if partial {
+		fmt.Fprintln(stdout, "  PARTIAL means content is missing from the file, not that the backup is damaged.")
+		fmt.Fprintln(stdout, "  The listed lines were kept only in the bundle. There is no other copy: without")
+		fmt.Fprintln(stdout, "  that file they have to be written again by hand.")
 	}
 	if len(plan.Todo) > 0 {
 		hr("Before starting the server")
