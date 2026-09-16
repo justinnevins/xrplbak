@@ -201,7 +201,8 @@ func cmdRestore(args []string) error {
 	fs := newFlags("restore", "rebuild config files; dry run unless --write")
 	sf := addSourceFlags(fs)
 	bundlePath := fs.String("bundle", "", "bundle file for this backup (optional; without it some content stays missing)")
-	write := fs.Bool("write", false, "write files into --target instead of a temp dir")
+	write := fs.Bool("write", false, "write files into --target instead of a temp dir. Asks before writing; pass --yes to answer up front")
+	yes := fs.Bool("yes", false, "answer the write confirmation with yes, for scripts")
 	target := fs.String("target", "", "directory for --write, e.g. /etc/xrpld")
 	force := fs.Bool("force", false, "with --write: overwrite existing files")
 	allowTomb := fs.Bool("allow-tombstoned", false, "restore the newest non-tombstone backup even if a tombstone is newer")
@@ -300,8 +301,8 @@ func cmdRestore(args []string) error {
 		fmt.Fprintln(stdout, "  Inspect them. Then re-run with --write --target /etc/xrpld to place them.")
 		return nil
 	}
-	if !confirm(fmt.Sprintf("  Write %d file(s) into %s?", len(plan.Files), *target)) {
-		return fail(exitUsage, "cancelled; nothing was written")
+	if !*yes && !confirm(fmt.Sprintf("  Write %d file(s) into %s?", len(plan.Files), *target)) {
+		return fail(exitUsage, "cancelled; nothing was written. In a script, pass --yes to answer this up front")
 	}
 	written, err := plan.WriteTarget(*target, *force)
 	if err != nil {

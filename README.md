@@ -98,7 +98,7 @@ Scripts branch on the code. Humans read the message.
 | Code | Meaning |
 |---|---|
 | 0 | done |
-| 1 | usage: bad flags, unreadable input file, or the operator cancelled at a prompt |
+| 1 | usage: bad flags, unreadable input file, or the operator cancelled at a prompt. `backup --submit` and `restore --write` ask before acting; pass `--yes` to answer up front in a script |
 | 2 | network: the XRPL server could not be read |
 | 3 | refused: the input holds something the tool will not handle (a seed, PEM material, a restore marker, an unsafe path in a backup) |
 | 4 | authentication: nothing authenticates with this key, a chunk, manifest, bundle, or share fails its check, or two different backups claim the same seq |

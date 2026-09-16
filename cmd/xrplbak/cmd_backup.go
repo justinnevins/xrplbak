@@ -82,7 +82,8 @@ func cmdBackup(args []string) error {
 	keyPass := fs.Bool("key-passphrase", false, "prompt for the key file passphrase")
 	out := fs.String("out", "xrplbak-out", "directory for the bundle, dump, and report")
 	rpcURL := fs.String("rpc", "", "XRPL JSON-RPC URL, or mainnet / testnet / devnet")
-	submit := fs.Bool("submit", false, "actually submit transactions (default is a dry run)")
+	submit := fs.Bool("submit", false, "actually submit transactions (default is a dry run). Asks before submitting; pass --yes to answer up front")
+	yes := fs.Bool("yes", false, "answer the submit confirmation with yes, for scripts")
 	maxFee := fs.Uint64("max-fee", 5000, "abort if the network fee per transaction exceeds this many drops")
 	tombstone := fs.Bool("tombstone", false, "publish a tombstone that marks earlier backups as retired")
 	deleteAnchor := fs.Bool("delete-anchor", false, "with --tombstone: also delete the DID entry (frees 0.2 XRP)")
@@ -152,7 +153,7 @@ func cmdBackup(args []string) error {
 			if seqErr != nil && !*forceSeq {
 				return fail(exitNetwork, "could not read existing backups (%v). Fix the server or pass --force-seq to submit as seq 1 anyway", seqErr)
 			}
-			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, warns)
+			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, warns)
 		}
 	}
 	return doDryRun(o, warns, *out)
@@ -222,7 +223,7 @@ func writeBundle(p *backup.Plan, out string) error {
 	return nil
 }
 
-func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor bool, warns []string) error {
+func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor, yes bool, warns []string) error {
 	p, err := backup.Build(o)
 	if err != nil {
 		return err
@@ -234,8 +235,8 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 	hr("Submit")
 	fmt.Fprintf(stdout, "  server:  %s\n", source)
 	fmt.Fprintf(stdout, "  account: %s\n", writer.Address())
-	if !confirm("  Submit these transactions?") {
-		return fail(exitUsage, "cancelled; nothing was submitted")
+	if !yes && !confirm("  Submit these transactions?") {
+		return fail(exitUsage, "cancelled; nothing was submitted. In a script, pass --yes to answer this up front")
 	}
 	if err := os.MkdirAll(out, 0o700); err != nil {
 		return err
