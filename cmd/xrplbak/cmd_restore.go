@@ -113,8 +113,14 @@ func (sf *sourceFlags) resolve() (*source, error) {
 	if _, derr := sign.DecodeAddress(s.account); derr != nil {
 		return nil, fail(exitUsage, "%v", derr)
 	}
-	if *sf.epoch >= 0 {
+	switch {
+	case *sf.epoch >= 0:
 		s.hint = uint32(*sf.epoch)
+	case *sf.epoch != -1:
+		// -1 is the unset sentinel. Any other negative value was parsed
+		// and then dropped, so the run continued on an epoch the operator
+		// had not asked for and was never told about.
+		return nil, fail(exitUsage, "--epoch must be zero or greater")
 	}
 	return s, nil
 }

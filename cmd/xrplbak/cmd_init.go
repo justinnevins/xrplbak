@@ -34,6 +34,9 @@ func cmdInit(args []string) error {
 	if _, err := os.Stat(keyPath); err == nil {
 		return fail(exitWrite, "%s already exists. Move it away first; init never overwrites a key file", keyPath)
 	}
+	if *threshold != 0 && *shares == 0 {
+		return fail(exitUsage, "--threshold only means something with --shares. Pass --shares N, or drop --threshold")
+	}
 	if *shares > 0 && *threshold == 0 {
 		*threshold = 2
 	}
@@ -174,8 +177,7 @@ func checkReentry(lines []string, isShares bool) bool {
 	if isShares {
 		i := r.Intn(len(lines))
 		got := prompt(fmt.Sprintf("Re-enter share %d of %d: ", i+1, len(lines)))
-		norm := func(s string) string { return strings.ToUpper(strings.NewReplacer("-", "", " ", "").Replace(s)) }
-		return norm(got) == norm(lines[i])
+		return sameShare(got, lines[i])
 	}
 	picks := r.Perm(len(lines))[:3]
 	for _, i := range picks {
@@ -186,4 +188,13 @@ func checkReentry(lines []string, isShares bool) bool {
 		}
 	}
 	return true
+}
+
+// sameShare compares a re-entered share with the one that was printed, using
+// the decoder's own rules. A share is copied off paper by hand, so
+// crypto.NormalizeShare folds the characters people confuse. Keeping a
+// second, stricter comparator here meant the check could reject a re-entry
+// the decoder would have accepted.
+func sameShare(got, want string) bool {
+	return crypto.NormalizeShare(got) == crypto.NormalizeShare(want)
 }

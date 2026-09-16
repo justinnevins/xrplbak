@@ -285,6 +285,12 @@ func openClient(rpcURL, dumpPath string) (xrpl.Client, string, error) {
 func recoveryKeys(wordsFile, sharesFile string) (discover.Keys, crypto.RootKey, error) {
 	var root crypto.RootKey
 	var err error
+	if wordsFile != "" && sharesFile != "" {
+		// Taking the words and never opening the shares lets a stale or
+		// wrong words file quietly beat the correct shares. --rpc and
+		// --dump already refuse each other for the same reason.
+		return nil, root, fail(exitUsage, "pass either --words-file or --shares-file, not both")
+	}
 	switch {
 	case wordsFile != "":
 		b, rerr := os.ReadFile(wordsFile)
