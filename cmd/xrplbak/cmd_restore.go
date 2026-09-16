@@ -30,7 +30,7 @@ func addSourceFlags(fs *flag.FlagSet) *sourceFlags {
 	return &sourceFlags{
 		rpcURL:     fs.String("rpc", "", "XRPL JSON-RPC URL, or mainnet / testnet / devnet"),
 		dumpPath:   fs.String("dump", "", "offline dump file written by backup (instead of --rpc)"),
-		account:    fs.String("account", "", "writer account address (default: from the key file)"),
+		account:    fs.String("account", "", "writer account address, from the paper card beside the recovery words (not needed with --key)"),
 		key:        fs.String("key", "", "xrplbak.key path; when present no recovery words are needed"),
 		keyPass:    fs.Bool("key-passphrase", false, "prompt for the key file passphrase"),
 		wordsFile:  fs.String("words-file", "", "file with the 24 recovery words (default: prompt)"),

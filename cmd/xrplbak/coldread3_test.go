@@ -41,6 +41,7 @@ func TestTodoNamesTheFileWhenTheBackupHasTwo(t *testing.T) {
 		t.Fatalf("exit %d, want %d:\n%s", r.code, exitOK, r.out)
 	}
 	seen := map[string]bool{}
+	valHeader := false
 	for _, l := range todoLines(r.out) {
 		if !strings.Contains(l, "kept only in") {
 			continue
@@ -52,6 +53,16 @@ func TestTodoNamesTheFileWhenTheBackupHasTwo(t *testing.T) {
 			t.Errorf("two items read the same, so one of them cannot be followed: %s", l)
 		}
 		seen[l] = true
+		// And the right file, not merely a file.
+		if strings.Contains(l, "[ips_fixed]") && !strings.Contains(l, "xrpld.cfg") {
+			t.Errorf("[ips_fixed] lives in xrpld.cfg, item says otherwise: %s", l)
+		}
+		if strings.Contains(l, "before the first stanza") && strings.Contains(l, "validators.txt") {
+			valHeader = true
+		}
+	}
+	if !valHeader {
+		t.Errorf("validators.txt's leading comment is not attributed to validators.txt:\n%s", r.out)
 	}
 }
 

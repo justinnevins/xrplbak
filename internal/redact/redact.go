@@ -135,9 +135,15 @@ var (
 
 // Move records one redaction for the report and the manifest.
 type Move struct {
+	File   string // set by backup, which knows the path; Split does not
 	Stanza string
 	Lines  int
-	Reason string
+	// Comments counts the lines in Lines that were comments, or settings
+	// whose comment alone moved. When Comments == Lines every setting in
+	// the stanza is still on-chain, and a restore without the bundle is
+	// missing prose, not configuration.
+	Comments int
+	Reason   string
 }
 
 // Result is the split output.
@@ -195,6 +201,9 @@ func Split(f *cfg.File, opt Options) (*Result, error) {
 			res.Moves = append(res.Moves, Move{Stanza: l.Stanza})
 		}
 		res.Moves[i].Lines++
+		if l.Kind == cfg.Comment || marker == CommentMarker {
+			res.Moves[i].Comments++
+		}
 		res.Moves[i].Reason = reason
 	}
 	keep := func(l cfg.Line) { res.OnChain.Lines = append(res.OnChain.Lines, l) }

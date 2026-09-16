@@ -47,7 +47,7 @@ Chunk plaintext is 960 bytes, ciphertext 976, MemoData 997, serialized Memos 101
 
 ## Manifest (plaintext JSON, sorted keys, no whitespace)
 
-See `internal/manifest`. Fields: v, epoch, seq, backup_id, created, tool, node{role, vpk_sha256, server_version}, onchain{plain_sha256, plain_len, chunks[{i, tx, ledger, sha256}]}, bundle{plain_sha256, cipher_sha256, len}, files[{path, mode, sha256, where}], redactions[{stanza, lines, to}], supersedes, tombstone, attestation{scheme, vpk, sig}.
+See `internal/manifest`. Fields: v, epoch, seq, backup_id, created, tool, node{role, vpk_sha256, server_version}, onchain{plain_sha256, plain_len, chunks[{i, tx, ledger, sha256}]}, bundle{plain_sha256, cipher_sha256, len}, files[{path, mode, sha256, where}], redactions[{f, stanza, lines, c, to}] (f is a 1-based index into files, c the comment-only count; both absent before v1.1), supersedes, tombstone, attestation{scheme, vpk, sig}.
 
 ## DID anchor (77 bytes in DIDSet Data)
 
