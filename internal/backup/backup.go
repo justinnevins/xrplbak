@@ -39,6 +39,9 @@ type Options struct {
 	Now            time.Time
 	Tombstone      bool
 	Attestation    *manifest.Attestation
+	// Comments says where the operator's comments go. The zero value keeps
+	// them in the off-chain bundle.
+	Comments redact.Mode
 	// Seq and Supersedes come from discovery when a client is available.
 	Seq        uint32
 	Supersedes string
@@ -78,7 +81,7 @@ func Build(o Options) (*Plan, error) {
 		if err != nil {
 			return err
 		}
-		res, err := redact.Split(cfg.Parse(string(raw)))
+		res, err := redact.Split(cfg.Parse(string(raw)), redact.Options{Comments: o.Comments})
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
@@ -86,16 +89,17 @@ func Build(o Options) (*Plan, error) {
 			role = "validator"
 		}
 		moves = append(moves, res.Moves...)
-		on := res.OnChain.Canonical()
+		on := res.OnChain.Render()
 		onTxt[path] = on
 		onEntries = append(onEntries, container.Entry{Path: path, Mode: mode, Data: []byte(on)})
 		where := "onchain"
-		if len(res.Bundle.Stanzas) > 0 {
-			bundleEntries = append(bundleEntries, container.Entry{Path: path, Mode: mode, Data: []byte(res.Bundle.Canonical())})
+		if len(res.Bundle.Lines) > 0 {
+			bundleEntries = append(bundleEntries, container.Entry{Path: path, Mode: mode, Data: []byte(res.Bundle.Render())})
 			where = "onchain+bundle"
 		}
-		// Hash the canonical full file: that is what restore reproduces.
-		sum := sha256.Sum256([]byte(cfg.Parse(string(raw)).Canonical()))
+		// Hash the operator's own bytes. That is what a correct restore
+		// reproduces, and what "complete" has to mean.
+		sum := sha256.Sum256(raw)
 		files = append(files, manifest.File{Path: path, Mode: mode, SHA256: hex.EncodeToString(sum[:]), Where: where})
 		return nil
 	}

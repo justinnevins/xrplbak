@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/justinnevins/xrplbak/internal/anchor"
-	"github.com/justinnevins/xrplbak/internal/cfg"
 	"github.com/justinnevins/xrplbak/internal/chunk"
 	"github.com/justinnevins/xrplbak/internal/crypto"
 	"github.com/justinnevins/xrplbak/internal/discover"
@@ -166,9 +165,12 @@ func TestEndToEnd(t *testing.T) {
 			t.Fatalf("%s incomplete (%s):\n%s", f.Path, f.Source, f.Data)
 		}
 	}
+	// The restored file is the operator's own bytes, not the tool's
+	// canonical rendering of them. Comments, blank lines and stanza order
+	// all come back.
 	orig, _ := os.ReadFile(fixtures + "validator-full.cfg")
-	if string(plan.Files[0].Data) != cfg.Parse(string(orig)).Canonical() {
-		t.Fatal("restored config differs from canonical original")
+	if string(plan.Files[0].Data) != string(orig) {
+		t.Fatalf("restored config differs from the original:\n%q\n---\n%q", plan.Files[0].Data, orig)
 	}
 	dir, err := plan.WriteTemp()
 	if err != nil {

@@ -27,10 +27,15 @@ func cmdRedact(args []string) error {
 	config := fs.String("config", "", "path to xrpld.cfg or rippled.cfg (default: auto-detect)")
 	validators := fs.String("validators", "", "path to validators.txt (default: from [validators_file] or beside the config)")
 	out := fs.String("out", "", "also write onchain/ and bundle/ copies into this directory")
+	comments := fs.String("comments", "bundle", commentsFlagHelp)
 	if err := fs.Parse(args); err != nil {
 		return parseError(err)
 	}
 
+	mode, err := commentsMode(*comments, false)
+	if err != nil {
+		return err
+	}
 	cfgPath, err := findConfig(*config)
 	if err != nil {
 		return err
@@ -44,7 +49,7 @@ func cmdRedact(args []string) error {
 		if err != nil {
 			return err
 		}
-		res, err := redact.Split(cfg.Parse(string(raw)))
+		res, err := redact.Split(cfg.Parse(string(raw)), redact.Options{Comments: mode})
 		if err != nil {
 			return fmt.Errorf("%s: %w", p, err)
 		}
@@ -52,7 +57,7 @@ func cmdRedact(args []string) error {
 		fmt.Fprintf(stdout, "  role: %s\n", res.Role)
 		summarizeMoves(res.Moves)
 		if *out != "" {
-			for sub, f := range map[string]string{"onchain": res.OnChain.Canonical(), "bundle": res.Bundle.Canonical()} {
+			for sub, f := range map[string]string{"onchain": res.OnChain.Render(), "bundle": res.Bundle.Render()} {
 				dst := filepath.Join(*out, sub, filepath.Base(p))
 				if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 					return err
@@ -85,10 +90,15 @@ func cmdBackup(args []string) error {
 	vpk := fs.String("validator-key", "", "validator public key (nHB...) to bind, stored only as a hash inside the ciphertext")
 	attest := fs.String("attestation", "", "hex signature over the attest string, made offline with validator-keys sign")
 	attestVPK := fs.String("attestation-key", "", "validator public key (nHB...) that made the attestation")
+	comments := fs.String("comments", "bundle", commentsFlagHelp)
 	if err := fs.Parse(args); err != nil {
 		return parseError(err)
 	}
 
+	mode, err := commentsMode(*comments, true)
+	if err != nil {
+		return err
+	}
 	cfgPath, err := findConfig(*config)
 	if err != nil {
 		return err
@@ -108,7 +118,7 @@ func cmdBackup(args []string) error {
 	if writer.AccountID() == nil || sign.EncodeAddress(kf.AccountID[:]) != writer.Address() {
 		return fail(exitAuth, "key file is inconsistent: writer seed does not match the stored account")
 	}
-	o := backup.Options{ConfigPath: cfgPath, ValidatorsPath: findValidators(*validators, cfgPath), Includes: includes, Key: kf, Tombstone: *tombstone, Seq: 1}
+	o := backup.Options{ConfigPath: cfgPath, ValidatorsPath: findValidators(*validators, cfgPath), Includes: includes, Key: kf, Tombstone: *tombstone, Seq: 1, Comments: mode}
 	if *vpk != "" {
 		pub, err := sign.DecodeNodePublic(*vpk)
 		if err != nil {
@@ -256,4 +266,33 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 	fmt.Fprintln(stdout, "  keep safe:      the bundle file, the dump file, your recovery words or shares, and the account address")
 	fmt.Fprintln(stdout, "  verify anytime: xrplbak verify --rpc", strings.Fields(source)[0])
 	return nil
+}
+
+// commentsFlagHelp documents the one choice the operator has about their own
+// prose. Comments are kept either way; this says where.
+const commentsFlagHelp = "where the operator's comments go: bundle (off-chain, the default) or onchain"
+
+// ackPhrase is what the operator types to put comments on a public ledger.
+const ackPhrase = "PUBLISH COMMENTS"
+
+// commentsMode reads the --comments flag. Choosing onchain means the
+// comments go into the on-chain ciphertext, which is public, permanent, and
+// readable by anyone who ever gets the key, so it is confirmed by hand. The
+// confirmation is skipped for redact, which encrypts and publishes nothing.
+func commentsMode(v string, confirm bool) (redact.Mode, error) {
+	switch v {
+	case "bundle":
+		return redact.CommentsToBundle, nil
+	case "onchain":
+		if !confirm {
+			return redact.CommentsOnChain, nil
+		}
+		fmt.Fprintf(stdout, "--comments=onchain puts every comment in your config into the on-chain\nciphertext. That is a public ledger: the bytes are permanent, and anyone\nwho ever obtains the backup key can read them. Comments are kept either\nway; the default keeps them in the off-chain bundle instead.\n\n")
+		if got := prompt("Type " + ackPhrase + " to continue: "); got != ackPhrase {
+			return 0, fail(exitUsage, "--comments=onchain was not confirmed; nothing was submitted")
+		}
+		fmt.Fprintf(stdout, "  acknowledged: comments will be written on-chain\n")
+		return redact.CommentsOnChain, nil
+	}
+	return 0, fail(exitUsage, "--comments must be bundle or onchain, not %q", v)
 }
