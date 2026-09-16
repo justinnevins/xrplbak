@@ -31,9 +31,23 @@ type File struct {
 
 // Redaction summarizes one move for the operator.
 type Redaction struct {
-	Stanza string `json:"stanza"`
-	Lines  int    `json:"lines"`
-	To     string `json:"to"`
+	// FileIndex is 1-based into Manifest.Files, so a path is not repeated
+	// once per stanza; a manifest part costs a transaction. 0 means the
+	// manifest predates the field.
+	FileIndex int    `json:"f,omitempty"`
+	Stanza    string `json:"stanza"`
+	Lines     int    `json:"lines"`
+	Comments  int    `json:"c,omitempty"` // of Lines, how many were comment-only
+	To        string `json:"to"`
+}
+
+// RedactionPath returns the file a redaction belongs to, or "" when the
+// manifest does not say.
+func (m *Manifest) RedactionPath(r Redaction) string {
+	if r.FileIndex < 1 || r.FileIndex > len(m.Files) {
+		return ""
+	}
+	return m.Files[r.FileIndex-1].Path
 }
 
 // Attestation is the optional validator-master signature (team option).

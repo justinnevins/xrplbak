@@ -111,8 +111,8 @@ When two different backups authenticate at the same epoch and seq, verify and re
 
 1. Get the recovery words (or 2 of 3 shares) and the writer account address from paper.
 2. Get the bundle file if you have it. Without it, restore still works, but the validator token and private topology must be re-entered.
-3. On the new host, build xrplbak from the tagged source.
-4. Run `xrplbak restore --rpc mainnet --bundle <file>`. Enter the words when asked. Read the report and the temp files.
+3. On the new host, build xrplbak from the tagged source. `xrplbak version` prints what a binary was built as; `dev` means an unstamped local build.
+4. Run `xrplbak restore --rpc mainnet --account <address> --bundle <file>`, or with `--dump <file>` in place of `--rpc` when you have the dump file and no server. Enter the words when asked. Read the report and the temp files.
 5. If the report marks a file PARTIAL, do the listed steps: regenerate the validator token from the master key, re-enter `[ips_fixed]` and admin lists. PARTIAL means content is missing from the file, not that the backup is damaged. That is exit code 5, and it is a different thing.
 6. Stop the old host if it still exists. One token, one running validator.
 7. Run `xrplbak restore ... --write --target /etc/xrpld`.

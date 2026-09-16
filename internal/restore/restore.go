@@ -99,20 +99,37 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, erro
 			p.Todo = append(p.Todo, "Regenerate the validator token from the master key (validator-keys create_token) and add [validator_token] to the config")
 		}
 		for _, r := range m.Redactions {
-			// Content before the first header has no stanza name. Printing
-			// it as "[]" reads like a template that failed to fill in, and
-			// the first cold-read evaluation had to reverse-engineer it.
-			where := "[" + r.Stanza + "]"
-			if r.Stanza == "" {
-				where = "the lines before the first stanza"
-			}
-			p.Todo = append(p.Todo, fmt.Sprintf("Re-enter %s: %d line(s) were kept only in the off-chain bundle", where, r.Lines))
+			p.Todo = append(p.Todo, todoLine(r, m.RedactionPath(r)))
 		}
 	}
 	if m.Node.Role == "validator" {
 		p.Todo = append(p.Todo, "Run only one validator with this token. Stop the old host before starting the new one")
 	}
 	return p, nil
+}
+
+// todoLine words one redaction for the operator. Three cold-read
+// evaluations shaped it. Content before the first header has no stanza
+// name, and "[]" read like a template that failed to fill in. With two
+// files in a backup, a flat list left the evaluator mapping items back to
+// files by hand. And a comment that moved was reported as a stanza to
+// re-enter, so a retention setting that was present read as lost.
+func todoLine(r manifest.Redaction, path string) string {
+	where := "[" + r.Stanza + "]"
+	if r.Stanza == "" {
+		where = "the lines before the first stanza"
+	}
+	if path != "" {
+		where += " in " + path
+	}
+	switch {
+	case r.Comments >= r.Lines && r.Lines > 0:
+		return fmt.Sprintf("Comment only: %s: %d comment line(s) were kept only in the off-chain bundle; every setting there is present", where, r.Lines)
+	case r.Comments > 0:
+		return fmt.Sprintf("Re-enter %s: %d line(s) were kept only in the off-chain bundle (%d of them comments)", where, r.Lines, r.Comments)
+	default:
+		return fmt.Sprintf("Re-enter %s: %d line(s) were kept only in the off-chain bundle", where, r.Lines)
+	}
 }
 
 // checkPath accepts only what backup itself writes: a clean absolute path

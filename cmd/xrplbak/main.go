@@ -44,6 +44,7 @@ Commands
   backup    Plan a backup (dry run). Add --submit to write it to the ledger.
   verify    Check backups on the ledger (--rpc) or in a dump file (--dump).
   restore   Recover files to a temp dir (dry run). Add --write --target DIR to place them.
+  version   Print the version this binary was built as. Compare it to the release tag.
 
 Run "xrplbak <command> -h" for the flags of one command.
 
@@ -366,7 +367,21 @@ func summarizeMoves(moves []redact.Move) {
 		fmt.Fprintln(stdout, "  nothing moved: every stanza is allowed on-chain")
 		return
 	}
+	// With more than one file, say which file each move is in. The
+	// redact command has no path on its moves, and one file needs no
+	// heading.
+	files := map[string]bool{}
 	for _, m := range moves {
+		if m.File != "" {
+			files[m.File] = true
+		}
+	}
+	last := ""
+	for _, m := range moves {
+		if len(files) > 1 && m.File != last {
+			fmt.Fprintf(stdout, "  %s\n", m.File)
+			last = m.File
+		}
 		fmt.Fprintf(stdout, "  [%s]: %d line(s) -> bundle (%s)\n", m.Stanza, m.Lines, m.Reason)
 	}
 }

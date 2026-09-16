@@ -88,7 +88,10 @@ func Build(o Options) (*Plan, error) {
 		if res.Role == "validator" {
 			role = "validator"
 		}
-		moves = append(moves, res.Moves...)
+		for _, mv := range res.Moves {
+			mv.File = path
+			moves = append(moves, mv)
+		}
 		on := res.OnChain.Render()
 		onTxt[path] = on
 		onEntries = append(onEntries, container.Entry{Path: path, Mode: mode, Data: []byte(on)})
@@ -164,7 +167,14 @@ func Build(o Options) (*Plan, error) {
 	m.Bundle.PlainSHA256 = hex.EncodeToString(bSum[:])
 	m.Files = files
 	for _, mv := range moves {
-		m.Redactions = append(m.Redactions, manifest.Redaction{Stanza: mv.Stanza, Lines: mv.Lines, To: "bundle"})
+		idx := 0
+		for i, f := range files {
+			if f.Path == mv.File {
+				idx = i + 1
+				break
+			}
+		}
+		m.Redactions = append(m.Redactions, manifest.Redaction{FileIndex: idx, Stanza: mv.Stanza, Lines: mv.Lines, Comments: mv.Comments, To: "bundle"})
 	}
 	m.Supersedes = o.Supersedes
 	m.Tombstone = o.Tombstone
