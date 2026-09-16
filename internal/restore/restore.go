@@ -64,11 +64,11 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, erro
 		f := &File{Path: e.Path, Mode: e.Mode, Source: "onchain"}
 		on := cfg.Parse(string(e.Data))
 		if b, ok := bundleByPath[e.Path]; ok {
-			f.Data = []byte(redact.Merge(on, cfg.Parse(string(b.Data))).Canonical())
+			f.Data = []byte(redact.Merge(on, cfg.Parse(string(b.Data))).Render())
 			f.Source = "onchain+bundle"
 			delete(bundleByPath, e.Path)
 		} else {
-			f.Data = []byte(redact.Merge(on, &cfg.File{}).Canonical())
+			f.Data = []byte(redact.Merge(on, &cfg.File{}).Render())
 			if strings.Contains(string(f.Data), redact.MovedMarker) {
 				f.Source = "onchain (bundle missing)"
 			}

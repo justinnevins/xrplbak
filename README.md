@@ -74,6 +74,21 @@ xrplbak restore --dump <dump> --bundle <bundle> --write --target /etc/xrpld
 
 The config path is auto-detected (`/etc/xrpld/xrpld.cfg`, then the legacy rippled paths). The key file is found next to the config or in the working directory. Every flag is listed by `xrplbak <command> -h`.
 
+### What a backup contains
+
+Your file, all of it. Comments, blank lines and the order you wrote the stanzas in are part of the backup, and a restore with the bundle reproduces the file byte for byte. rippled ignores comments; the person who has to read the config in two years does not.
+
+Where your comments go is the one choice you have about them:
+
+```
+xrplbak backup                            # comments go in the off-chain bundle (default)
+xrplbak backup --comments=onchain         # comments go in the on-chain ciphertext too
+```
+
+The default keeps them off the ledger because a comment is free text the tool cannot classify. `--comments=onchain` asks you to type an acknowledgment first, because those bytes are public and permanent and anyone who ever obtains the backup key can read them. Either way the comments are kept, and either way the redaction scanners read them: a comment holding a key, a private address or an internal hostname moves to the bundle whichever mode you pick.
+
+A restore without the bundle still boots. Every line that moved leaves a `# xrplbak:` marker in its place, so the gaps are visible in the file rather than silently absent.
+
 Fund the writer account with at least 1.5 XRP: 1 XRP base reserve, 0.2 XRP DID reserve, and fees of about 10 drops per transaction.
 
 ### Exit codes

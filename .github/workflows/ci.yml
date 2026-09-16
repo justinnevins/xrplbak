@@ -49,6 +49,10 @@ jobs:
             target: FuzzSplitMergeRoundTrip
           - pkg: ./internal/redact
             target: FuzzOnChainIsClean
+          - pkg: ./internal/redact
+            target: FuzzBundlelessRestoreStillParses
+          - pkg: ./internal/redact
+            target: FuzzOnChainScannersRunOnComments
           - pkg: ./internal/container
             target: FuzzPackUnpackRoundTrip
           - pkg: ./internal/container

@@ -25,10 +25,33 @@ const (
 	OnChain
 )
 
-// MovedMarker is the line left in the on-chain copy where a stanza or line
-// moved to the bundle, so a bundle-less restore still boots and a human
-// sees what is missing.
+// MovedMarker is the line left in the on-chain copy where a line moved to
+// the bundle, so a bundle-less restore still boots and a human sees what is
+// missing.
 const MovedMarker = "# xrplbak: content moved to the off-chain bundle"
+
+// CommentMarker is left in place of a line's inline comment when only the
+// comment moved. The setting itself stays on-chain, so a bundle-less restore
+// keeps working, and the operator can still see that something was removed.
+const CommentMarker = "# xrplbak: comment moved to the off-chain bundle"
+
+// Mode says where the operator's comments go. Comments are free text the
+// tool cannot classify, so the default keeps them off a public ledger. They
+// are never discarded in either mode.
+type Mode int
+
+const (
+	// CommentsToBundle puts comments in the encrypted off-chain bundle.
+	CommentsToBundle Mode = iota
+	// CommentsOnChain puts them in the on-chain ciphertext instead. The
+	// operator asks for this explicitly and acknowledges it once.
+	CommentsOnChain
+)
+
+// Options for one split.
+type Options struct {
+	Comments Mode
+}
 
 // Stanzas the tool refuses. Their presence means the operator is about to
 // back up something xrplbak must never touch.
@@ -137,78 +160,175 @@ func (e *RefusedError) Error() string {
 	return fmt.Sprintf("refused: [%s] (line %d): %s", e.Stanza, e.LineNo, e.Reason)
 }
 
-// Split classifies f. The config is the main xrpld.cfg. validators.txt
-// uses the same rules and simply ends up all on-chain.
-func Split(f *cfg.File) (*Result, error) {
+// Split classifies f line by line. The config is the main xrpld.cfg.
+// validators.txt uses the same rules and simply ends up all on-chain.
+//
+// Both outputs are whole documents. OnChain is the operator's file with
+// every moved line replaced by a marker, so it still parses as a config and
+// a bundle-less restore boots. Bundle holds the moved lines in the order
+// they were taken. Merge puts them back, and the result is the operator's
+// original bytes.
+func Split(f *cfg.File, opt Options) (*Result, error) {
 	res := &Result{OnChain: &cfg.File{}, Bundle: &cfg.File{}, Role: "node"}
+	if err := refuse(f); err != nil {
+		return nil, err
+	}
 	for _, s := range f.Stanzas {
-		if reason, bad := neverStanzas[s.Name]; bad {
-			return nil, &RefusedError{Stanza: s.Name, LineNo: s.LineNo, Reason: reason}
-		}
-		for i, l := range s.Lines {
-			if !blobStanzas[s.Name] && (reSeed.MatchString(l) || reRFC1751.MatchString(l)) {
-				return nil, &RefusedError{Stanza: s.Name, LineNo: s.LineNo + i + 1, Reason: "line looks like a seed or secret key"}
-			}
-			if strings.Contains(l, "-----BEGIN") {
-				return nil, &RefusedError{Stanza: s.Name, LineNo: s.LineNo + i + 1, Reason: "PEM key material"}
-			}
-			if strings.HasPrefix(l, cfg.MarkerPrefix) {
-				return nil, &RefusedError{Stanza: s.Name, LineNo: s.LineNo + i + 1, Reason: "file contains an xrplbak restore marker; finish the restore (merge the bundle) before backing it up"}
-			}
-		}
-		// An empty [validator_token] stanza carries no token, so it does
-		// not make this host a validator. Calling it one puts "validator"
-		// in the on-chain manifest for a plain node and makes restore tell
-		// the operator to regenerate a token that never existed and to stop
-		// a validator that was never running.
 		if s.Name == "validator_token" && len(s.Lines) > 0 {
 			res.Role = "validator"
 		}
-		if len(s.Lines) == 0 {
-			// A stanza header with nothing under it holds no content to
-			// protect. Moving it would write a marker the original never
-			// had, so restore would report a correct backup as changed.
-			res.OnChain.Stanzas = append(res.OnChain.Stanzas, &cfg.Stanza{Name: s.Name})
-			continue
+	}
+	// One Move per stanza, in the order stanzas first lose a line.
+	at := map[string]int{}
+	move := func(l cfg.Line, marker, reason string) {
+		out := l
+		out.Raw = marker
+		if marker == CommentMarker {
+			out.Raw = l.Value + " " + CommentMarker
 		}
-		switch {
-		case bundleStanzas[s.Name]:
-			res.moveStanza(s, "bundle-only stanza")
-		case !onChainStanzas[s.Name] && !strings.HasPrefix(s.Name, "port_"):
-			res.moveStanza(s, "stanza not on the on-chain allowlist")
-		default:
-			res.splitLines(s)
+		res.OnChain.Lines = append(res.OnChain.Lines, out)
+		res.Bundle.Lines = append(res.Bundle.Lines, l)
+		i, ok := at[l.Stanza]
+		if !ok {
+			i = len(res.Moves)
+			at[l.Stanza] = i
+			res.Moves = append(res.Moves, Move{Stanza: l.Stanza})
+		}
+		res.Moves[i].Lines++
+		res.Moves[i].Reason = reason
+	}
+	keep := func(l cfg.Line) { res.OnChain.Lines = append(res.OnChain.Lines, l) }
+
+	for _, l := range f.Lines {
+		switch l.Kind {
+		case cfg.Blank, cfg.Header:
+			keep(l)
+		case cfg.Comment:
+			if opt.Comments == CommentsToBundle {
+				move(l, MovedMarker, "operator comment")
+				continue
+			}
+			if why := lineReason(l.Stanza, l.Raw); why != "" {
+				move(l, MovedMarker, why)
+				continue
+			}
+			keep(l)
+		case cfg.Value:
+			if why := valueReason(l.Stanza, l.Value); why != "" {
+				move(l, MovedMarker, why)
+				continue
+			}
+			if l.Comment == "" {
+				keep(l)
+				continue
+			}
+			// The setting may stay; its comment is judged on its own.
+			if opt.Comments == CommentsToBundle {
+				move(l, CommentMarker, "operator comment")
+				continue
+			}
+			if why := lineReason(l.Stanza, l.Comment); why != "" {
+				move(l, CommentMarker, why)
+				continue
+			}
+			keep(l)
 		}
 	}
+	res.OnChain.Stanzas = cfg.Parse(res.OnChain.Render()).Stanzas
+	res.Bundle.Stanzas = cfg.Parse(res.Bundle.Render()).Stanzas
 	return res, nil
 }
 
-func (r *Result) moveStanza(s *cfg.Stanza, reason string) {
-	r.Bundle.Stanzas = append(r.Bundle.Stanzas, &cfg.Stanza{Name: s.Name, Lines: append([]string{}, s.Lines...)})
-	r.OnChain.Stanzas = append(r.OnChain.Stanzas, &cfg.Stanza{Name: s.Name, Lines: []string{MovedMarker}})
-	r.Moves = append(r.Moves, Move{Stanza: s.Name, Lines: len(s.Lines), Reason: reason})
-}
-
-func (r *Result) splitLines(s *cfg.Stanza) {
-	keep := &cfg.Stanza{Name: s.Name}
-	moved := &cfg.Stanza{Name: s.Name}
-	reason := ""
-	for _, l := range s.Lines {
-		why := lineReason(s.Name, l)
-		if why == "" {
-			keep.Lines = append(keep.Lines, l)
+// refuse stops the run on content xrplbak must never handle. It reads every
+// line, comments included: a seed written in a comment is still a seed in
+// the file.
+func refuse(f *cfg.File) error {
+	for _, s := range f.Stanzas {
+		if reason, bad := neverStanzas[s.Name]; bad {
+			return &RefusedError{Stanza: s.Name, LineNo: s.LineNo, Reason: reason}
+		}
+	}
+	for _, l := range f.Lines {
+		if l.Kind == cfg.Blank || l.Kind == cfg.Header {
 			continue
 		}
-		// One marker per moved line, in place, so Merge restores order.
-		keep.Lines = append(keep.Lines, MovedMarker)
-		moved.Lines = append(moved.Lines, l)
-		reason = why
+		text := l.Raw
+		if !blobStanzas[l.Stanza] && (reSeed.MatchString(text) || reRFC1751.MatchString(text)) {
+			return &RefusedError{Stanza: l.Stanza, LineNo: l.No, Reason: "line looks like a seed or secret key"}
+		}
+		if strings.Contains(text, "-----BEGIN") {
+			return &RefusedError{Stanza: l.Stanza, LineNo: l.No, Reason: "PEM key material"}
+		}
+		if strings.Contains(text, cfg.MarkerPrefix) {
+			return &RefusedError{Stanza: l.Stanza, LineNo: l.No, Reason: "file contains an xrplbak restore marker; finish the restore (merge the bundle) before backing it up"}
+		}
 	}
-	if len(moved.Lines) > 0 {
-		r.Bundle.Stanzas = append(r.Bundle.Stanzas, moved)
-		r.Moves = append(r.Moves, Move{Stanza: s.Name, Lines: len(moved.Lines), Reason: reason})
+	return nil
+}
+
+// valueReason decides a setting line: the stanza allowlist first, then the
+// per-line scanners.
+func valueReason(stanza, value string) string {
+	switch {
+	case bundleStanzas[stanza]:
+		return "bundle-only stanza"
+	case !onChainStanzas[stanza] && !strings.HasPrefix(stanza, "port_") && stanza != "":
+		return "stanza not on the on-chain allowlist"
+	case stanza == "":
+		return "line sits outside any stanza"
 	}
-	r.OnChain.Stanzas = append(r.OnChain.Stanzas, keep)
+	return lineReason(stanza, value)
+}
+
+// Merge recombines an on-chain document with its bundle. Each marker in the
+// on-chain document takes the next line from the bundle, in the order Split
+// took them, so the result is the operator's original file. Without a bundle
+// the markers stay, so the operator sees the gaps rather than a quietly
+// shorter file.
+func Merge(onChain, bundle *cfg.File) *cfg.File {
+	out := &cfg.File{}
+	rest := bundle.Lines
+	take := func() (cfg.Line, bool) {
+		for len(rest) > 0 {
+			l := rest[0]
+			rest = rest[1:]
+			// Render appends a final empty segment; it is not a moved line.
+			if l.Raw == "" && l.End == "" {
+				continue
+			}
+			return l, true
+		}
+		return cfg.Line{}, false
+	}
+	for _, l := range onChain.Lines {
+		if !isMarker(l) {
+			out.Lines = append(out.Lines, l)
+			continue
+		}
+		b, ok := take()
+		if !ok {
+			out.Lines = append(out.Lines, l)
+			continue
+		}
+		b.End = l.End
+		out.Lines = append(out.Lines, b)
+	}
+	for {
+		b, ok := take()
+		if !ok {
+			break
+		}
+		out.Lines = append(out.Lines, b)
+	}
+	out.Stanzas = cfg.Parse(out.Render()).Stanzas
+	return out
+}
+
+// isMarker reports whether a line stands in for content in the bundle,
+// either as a whole line or as a replaced inline comment.
+func isMarker(l cfg.Line) bool {
+	t := strings.TrimSpace(l.Raw)
+	return t == MovedMarker || strings.HasSuffix(t, CommentMarker)
 }
 
 // lineReason returns "" if the line may stay on-chain, else why it moves.
@@ -314,52 +434,4 @@ func hostValue(stanza, line string) string {
 		h = h[:i]
 	}
 	return strings.TrimSuffix(strings.ToLower(h), ".")
-}
-
-// Merge recombines an on-chain file with its bundle for restore. Each
-// marker in an on-chain stanza is replaced by the next bundle line for that
-// stanza; a stanza that is a single marker takes the whole bundle stanza.
-// Bundle-only stanzas are appended. Without a bundle the markers stay so
-// the operator sees the gaps.
-func Merge(onChain, bundle *cfg.File) *cfg.File {
-	out := &cfg.File{}
-	seen := map[string]bool{}
-	for _, s := range onChain.Stanzas {
-		c := &cfg.Stanza{Name: s.Name}
-		var bl []string
-		if b := bundle.Get(s.Name); b != nil {
-			bl = append([]string{}, b.Lines...)
-		}
-		markers := 0
-		for _, l := range s.Lines {
-			if l == MovedMarker {
-				markers++
-			}
-		}
-		for _, l := range s.Lines {
-			if l != MovedMarker {
-				c.Lines = append(c.Lines, l)
-				continue
-			}
-			switch {
-			case len(bl) == 0:
-				c.Lines = append(c.Lines, MovedMarker)
-			case markers == 1:
-				c.Lines = append(c.Lines, bl...)
-				bl = nil
-			default:
-				c.Lines = append(c.Lines, bl[0])
-				bl = bl[1:]
-			}
-		}
-		c.Lines = append(c.Lines, bl...)
-		out.Stanzas = append(out.Stanzas, c)
-		seen[s.Name] = true
-	}
-	for _, b := range bundle.Stanzas {
-		if !seen[b.Name] {
-			out.Stanzas = append(out.Stanzas, &cfg.Stanza{Name: b.Name, Lines: append([]string{}, b.Lines...)})
-		}
-	}
-	return out
 }

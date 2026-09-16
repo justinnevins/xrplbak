@@ -18,14 +18,14 @@ func load(t *testing.T, name string) *cfg.File {
 }
 
 func TestSplitValidator(t *testing.T) {
-	res, err := Split(load(t, "validator-full.cfg"))
+	res, err := Split(load(t, "validator-full.cfg"), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Role != "validator" {
 		t.Fatal("role")
 	}
-	on := res.OnChain.Canonical()
+	on := res.OnChain.Render()
 	for _, forbidden := range []string{"eyJ2YWxp", "10.20.30.40", "10.0.0.5", "peer.example.internal", "log_level", "admin =", "ntp1.lan", "xrpl-peer2"} {
 		if strings.Contains(on, forbidden) {
 			t.Fatalf("on-chain text contains %q:\n%s", forbidden, on)
@@ -37,12 +37,24 @@ func TestSplitValidator(t *testing.T) {
 			t.Fatalf("on-chain text lacks %q:\n%s", want, on)
 		}
 	}
-	b := res.Bundle
-	if b.Get("validator_token") == nil || b.Get("ips_fixed") == nil || b.Get("port_ws_admin_local") == nil {
-		t.Fatal("bundle stanzas")
+	// The bundle is the moved lines in the order they were taken, so it is
+	// checked as text. Every assertion below is the one the stanza view
+	// carried before: the token, the fixed peers and the admin line moved.
+	b := res.Bundle.Render()
+	for _, want := range []string{"eyJ2YWxp", "10.20.30.40", "10.0.0.5"} {
+		if !strings.Contains(b, want) {
+			t.Fatalf("bundle lacks %q:\n%s", want, b)
+		}
 	}
-	if len(b.Get("port_ws_admin_local").Lines) != 1 {
-		t.Fatalf("only the admin line moves: %v", b.Get("port_ws_admin_local").Lines)
+	// Only the admin line leaves [port_ws_admin_local]; its other settings
+	// stay on-chain.
+	if n := strings.Count(res.OnChain.Render(), MovedMarker); n == 0 {
+		t.Fatal("nothing was moved")
+	}
+	for _, m := range res.Moves {
+		if m.Stanza == "port_ws_admin_local" && m.Lines != 1 {
+			t.Fatalf("only the admin line moves from port_ws_admin_local, got %d", m.Lines)
+		}
 	}
 	// port_rpc_admin_local keeps ip=127.0.0.1 on-chain, moves admin line.
 	if !strings.Contains(on, "[port_rpc_admin_local]\nport = 5005\nip = 127.0.0.1\n"+MovedMarker+"\nprotocol = http\n") {
@@ -51,7 +63,7 @@ func TestSplitValidator(t *testing.T) {
 }
 
 func TestRefuseNodeSeed(t *testing.T) {
-	_, err := Split(load(t, "node-with-seed.cfg"))
+	_, err := Split(load(t, "node-with-seed.cfg"), Options{})
 	re, ok := err.(*RefusedError)
 	if !ok || re.Stanza != "node_seed" {
 		t.Fatalf("want node_seed refusal, got %v", err)
@@ -59,58 +71,73 @@ func TestRefuseNodeSeed(t *testing.T) {
 }
 
 func TestRefuseSeedPatternAnywhere(t *testing.T) {
-	_, err := Split(load(t, "node-seed-in-wrong-stanza.cfg"))
+	_, err := Split(load(t, "node-seed-in-wrong-stanza.cfg"), Options{})
 	if _, ok := err.(*RefusedError); !ok {
 		t.Fatalf("want refusal, got %v", err)
 	}
 	f := cfg.Parse("[node_size]\n-----BEGIN PRIVATE KEY-----\n")
-	if _, err := Split(f); err == nil {
+	if _, err := Split(f, Options{}); err == nil {
 		t.Fatal("PEM must refuse")
 	}
 	f = cfg.Parse("[node_size]\nAAAA BBBB CCCC DDDD EEEE FFFF GGGG HHHH IIII JJJJ KKKK LLLL\n")
-	if _, err := Split(f); err == nil {
+	if _, err := Split(f, Options{}); err == nil {
 		t.Fatal("RFC1751 must refuse")
 	}
 }
 
 func TestUnknownStanzaGoesToBundle(t *testing.T) {
-	res, err := Split(cfg.Parse("[mystery]\nvalue\n[node_size]\nhuge\n"))
+	res, err := Split(cfg.Parse("[mystery]\nvalue\n[node_size]\nhuge\n"), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Bundle.Get("mystery") == nil || len(res.Moves) != 1 {
-		t.Fatal("unknown stanza must move")
+	if !strings.Contains(res.Bundle.Render(), "value") || len(res.Moves) != 1 {
+		t.Fatalf("unknown stanza must move: moves=%+v bundle=%q", res.Moves, res.Bundle.Render())
 	}
-	if strings.Contains(res.OnChain.Canonical(), "value") {
+	if strings.Contains(res.OnChain.Render(), "value") {
 		t.Fatal("unknown value leaked on-chain")
 	}
 }
 
-func TestValidatorsTxtAllOnChain(t *testing.T) {
-	res, err := Split(load(t, "validators.txt"))
+// TestValidatorsTxtSettingsAllOnChain keeps the original assertion for every
+// setting in validators.txt: none of them is redacted. What changed is that
+// the operator's comments now go to the bundle rather than being discarded,
+// so a move whose only content is comment lines is expected.
+func TestValidatorsTxtSettingsAllOnChain(t *testing.T) {
+	orig := load(t, "validators.txt")
+	res, err := Split(orig, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Moves) != 0 || len(res.Bundle.Stanzas) != 0 {
+	for _, l := range res.Bundle.Lines {
+		if l.Kind != cfg.Comment && l.Raw != "" {
+			t.Fatalf("a setting left validators.txt: %q", l.Raw)
+		}
+	}
+	// With comments kept on-chain nothing moves at all.
+	res, err = Split(orig, Options{Comments: CommentsOnChain})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Moves) != 0 || len(res.Bundle.Lines) != 0 {
 		t.Fatalf("validators.txt should be fully on-chain: %+v", res.Moves)
 	}
 }
 
 func TestMergeRoundTrip(t *testing.T) {
 	orig := load(t, "validator-full.cfg")
-	res, err := Split(orig)
+	res, err := Split(orig, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Simulate the on-chain copy going through text and back.
-	on := cfg.Parse(res.OnChain.Canonical())
-	bundle := cfg.Parse(res.Bundle.Canonical())
-	merged := Merge(on, bundle)
-	if merged.Canonical() != orig.Canonical() {
-		t.Fatalf("merge mismatch:\n%s\n---\n%s", merged.Canonical(), orig.Canonical())
+	// Simulate both halves going through text and back. The comparison is
+	// over the operator's bytes, not the tool's canonical view.
+	on := cfg.Parse(res.OnChain.Render())
+	bundle := cfg.Parse(res.Bundle.Render())
+	if got := Merge(on, bundle).Render(); got != orig.Render() {
+		t.Fatalf("merge mismatch:\n%q\n---\n%q", got, orig.Render())
 	}
 	partial := Merge(on, &cfg.File{})
-	if !strings.Contains(partial.Canonical(), MovedMarker) {
+	if !strings.Contains(partial.Render(), MovedMarker) {
 		t.Fatal("bundle-less merge must keep markers")
 	}
 }
@@ -149,13 +176,13 @@ func TestHostnameHeuristic(t *testing.T) {
 		{"onion moves", "[ips]\nabcdefghij.onion 51235\n", true},
 	}
 	for _, c := range cases {
-		res, err := Split(cfg.Parse(c.text))
+		res, err := Split(cfg.Parse(c.text), Options{})
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
 		got := len(res.Moves) > 0
 		if got != c.moved {
-			t.Fatalf("%s: moved=%v want %v (on-chain: %q)", c.name, got, c.moved, res.OnChain.Canonical())
+			t.Fatalf("%s: moved=%v want %v (on-chain: %q)", c.name, got, c.moved, res.OnChain.Render())
 		}
 	}
 }
@@ -189,20 +216,20 @@ func TestEmptyStanzaRoundTrips(t *testing.T) {
 		"[]\n[node_size]\nhuge\n",
 	} {
 		orig := cfg.Parse(text)
-		res, err := Split(orig)
+		res, err := Split(orig, Options{})
 		if err != nil {
 			t.Fatalf("%q: %v", text, err)
 		}
-		if strings.Contains(res.OnChain.Canonical(), MovedMarker) {
-			t.Fatalf("%q: an empty stanza produced a marker:\n%s", text, res.OnChain.Canonical())
+		if strings.Contains(res.OnChain.Render(), MovedMarker) {
+			t.Fatalf("%q: an empty stanza produced a marker:\n%s", text, res.OnChain.Render())
 		}
 		for _, m := range res.Moves {
 			if m.Lines == 0 {
 				t.Fatalf("%q: reported a move of 0 lines for stanza %q", text, m.Stanza)
 			}
 		}
-		merged := Merge(cfg.Parse(res.OnChain.Canonical()), cfg.Parse(res.Bundle.Canonical()))
-		if merged.Canonical() != orig.Canonical() {
+		merged := Merge(cfg.Parse(res.OnChain.Render()), cfg.Parse(res.Bundle.Render()))
+		if merged.Render() != orig.Render() {
 			t.Fatalf("%q: round trip mismatch:\nwant %q\ngot  %q", text, orig.Canonical(), merged.Canonical())
 		}
 	}
@@ -214,7 +241,7 @@ func TestEmptyStanzaRoundTrips(t *testing.T) {
 // validate, and made restore hand the operator two instructions about a
 // token that never existed.
 func TestEmptyValidatorTokenIsNotAValidator(t *testing.T) {
-	res, err := Split(cfg.Parse("[validator_token]\n[server]\nport_rpc\n"))
+	res, err := Split(cfg.Parse("[validator_token]\n[server]\nport_rpc\n"), Options{})
 	if err != nil {
 		t.Fatalf("split: %v", err)
 	}
@@ -222,7 +249,7 @@ func TestEmptyValidatorTokenIsNotAValidator(t *testing.T) {
 		t.Fatalf("role = %q, want %q", res.Role, "node")
 	}
 	// A stanza that carries a token still reads as a validator.
-	res, err = Split(cfg.Parse("[validator_token]\neyJ2YWxpZGF0aW9u\n"))
+	res, err = Split(cfg.Parse("[validator_token]\neyJ2YWxpZGF0aW9u\n"), Options{})
 	if err != nil {
 		t.Fatalf("split: %v", err)
 	}
@@ -236,15 +263,70 @@ func TestEmptyValidatorTokenIsNotAValidator(t *testing.T) {
 // required, so text after it is operator prose the node never reads. It must
 // not be published on a public ledger.
 func TestInlineCommentDoesNotReachTheChain(t *testing.T) {
-	res, err := Split(cfg.Parse("[port_rpc]\nport=5005#admin_password=hunter2\n"))
+	res, err := Split(cfg.Parse("[port_rpc]\nport=5005#admin_password=hunter2\n"), Options{})
 	if err != nil {
 		t.Fatalf("split: %v", err)
 	}
-	on := res.OnChain.Canonical()
+	on := res.OnChain.Render()
 	if strings.Contains(on, "hunter2") {
 		t.Fatalf("comment text reached the on-chain copy:\n%s", on)
 	}
 	if !strings.Contains(on, "port=5005") {
 		t.Fatalf("the setting itself was lost:\n%s", on)
+	}
+}
+
+// TestSeedShapedCommentIsRefused pins the refusal path over comments. The
+// per-line scanners never look for seeds; only refuse does, and it has to
+// read comments as well as settings. A seed an operator left in a comment is
+// still a seed sitting in the config file, and it is the one thing the tool
+// must never carry.
+//
+// Found by the mutation pass: making refuse skip comment lines survived the
+// whole suite and every fuzz target.
+func TestSeedShapedCommentIsRefused(t *testing.T) {
+	texts := []string{
+		"[node_size]\n# old seed sFAKEFAKEFAKEFAKEFAKEFAKEFAKE was rotated out\nhuge\n",
+		"[node_size]\nhuge # old seed sFAKEFAKEFAKEFAKEFAKEFAKEFAKE\n",
+		"[node_size]\n# AAAA BBBB CCCC DDDD EEEE FFFF GGGG HHHH IIII JJJJ KKKK LLLL\nhuge\n",
+		"[node_size]\n# -----BEGIN PRIVATE KEY-----\nhuge\n",
+	}
+	for _, mode := range []Mode{CommentsToBundle, CommentsOnChain} {
+		for _, text := range texts {
+			if _, err := Split(cfg.Parse(text), Options{Comments: mode}); err == nil {
+				t.Errorf("mode %d: %q was accepted", mode, text)
+			} else if _, ok := err.(*RefusedError); !ok {
+				t.Errorf("mode %d: %q gave %v, want a refusal", mode, text, err)
+			}
+		}
+	}
+}
+
+// TestLineOutsideAnyStanzaMovesToTheBundle pins the rule directly, on the
+// split's own output, rather than through valueReason. A line before the
+// first header belongs to no stanza, so no allowlist applies to it and it
+// cannot be judged. Doctrine sends it off-chain.
+//
+// Found by the mutation pass: FuzzOnChainIsClean calls valueReason as its
+// oracle, so it cannot catch a defect inside valueReason. Same lesson as
+// increment 3: an oracle must not call the helper it pins.
+func TestLineOutsideAnyStanzaMovesToTheBundle(t *testing.T) {
+	const text = "orphan_setting=hello\n[node_size]\nhuge\n"
+	res, err := Split(cfg.Parse(text), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on := res.OnChain.Render(); strings.Contains(on, "orphan_setting=hello") {
+		t.Fatalf("a line outside any stanza stayed on-chain:\n%s", on)
+	}
+	if b := res.Bundle.Render(); !strings.Contains(b, "orphan_setting=hello") {
+		t.Fatalf("the line was not kept in the bundle:\n%q", b)
+	}
+	if len(res.Moves) != 1 {
+		t.Fatalf("moves: %+v", res.Moves)
+	}
+	// The settings inside a known stanza still stay on-chain.
+	if on := res.OnChain.Render(); !strings.Contains(on, "huge") {
+		t.Fatalf("a known stanza lost its setting:\n%s", on)
 	}
 }

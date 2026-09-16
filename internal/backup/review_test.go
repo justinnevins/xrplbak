@@ -107,7 +107,7 @@ func TestJunkPartCannotShadowRealManifest(t *testing.T) {
 // Finding 3 and 4: port credentials and seeds in key stanzas.
 func TestRedactPortCredentialsAndSeedInValidators(t *testing.T) {
 	f := cfg.Parse("[port_rpc_admin_local]\nport = 5005\nip = 127.0.0.1\nadmin_password = hunter2\npassword = p\nssl_key = /etc/k.pem\nprotocol = http\n")
-	res, err := redact.Split(f)
+	res, err := redact.Split(f, redact.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,11 +117,11 @@ func TestRedactPortCredentialsAndSeedInValidators(t *testing.T) {
 			t.Fatalf("%q leaked on-chain:\n%s", bad, on)
 		}
 	}
-	_, err = redact.Split(cfg.Parse("[validators]\nsnFAKEwhBBnsTS3hSm8Kq6a9JhnBdxa\n"))
+	_, err = redact.Split(cfg.Parse("[validators]\nsnFAKEwhBBnsTS3hSm8Kq6a9JhnBdxa\n"), redact.Options{})
 	if err == nil {
 		t.Fatal("seed in [validators] must be refused")
 	}
-	_, err = redact.Split(cfg.Parse("[node_size]\n" + redact.MovedMarker + "\n"))
+	_, err = redact.Split(cfg.Parse("[node_size]\n"+redact.MovedMarker+"\n"), redact.Options{})
 	if err == nil {
 		t.Fatal("restore marker in input must be refused")
 	}
@@ -156,7 +156,7 @@ func TestRestoreRefusesTraversalAndSetuid(t *testing.T) {
 // Finding 12: duplicate stanza names survive split and merge.
 func TestDuplicateStanzasMerge(t *testing.T) {
 	f := cfg.Parse("[ips_fixed]\n10.0.0.1 2459\n[node_size]\nhuge\n[ips_fixed]\n10.0.0.2 2459\n")
-	res, err := redact.Split(f)
+	res, err := redact.Split(f, redact.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
