@@ -112,6 +112,11 @@ func (l *Ledger) submitBatch(tx *codec.Tx, addr string, acct *xrpl.AccountState,
 			return "temREDUNDANT", nil
 		}
 	}
+	// rippled Batch::calculateBaseFee: the base fee for the outer
+	// transaction, one more for the batch, and one per inner transaction.
+	if tx.FeeDrops < 10*uint64(len(tx.Inner)+2) {
+		return "telINSUF_FEE_P", nil
+	}
 	// The outer transaction applies: one sequence, the whole fee.
 	acct.Sequence++
 	acct.BalanceDrops -= tx.FeeDrops

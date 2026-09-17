@@ -66,9 +66,13 @@ func TestBatchTailIsAtomic(t *testing.T) {
 		t.Fatalf("manifest in ledger %d, anchor in ledger %d; the tail was not one transaction", res.Latest.Ledger, s.Dump.DID.LedgerIndex)
 	}
 	// A batched anchor cannot know the manifest's ledger when it is built,
-	// so it records 0, and discovery must not read that as a problem.
+	// so it records 0, and discovery must not read that as a problem. It
+	// does know the hash of the manifest's first part, and names it.
 	if res.Anchor.ManifestLedger != 0 {
 		t.Fatalf("batched anchor recorded manifest ledger %d, want 0", res.Anchor.ManifestLedger)
+	}
+	if !strings.EqualFold(res.Anchor.TxHashHex(), res.Latest.TxHash) {
+		t.Fatalf("anchor names manifest tx %s, the manifest's first part is %s", res.Anchor.TxHashHex(), res.Latest.TxHash)
 	}
 	entries, err := discover.Fetch(e.ledger, keys, res, res.Latest)
 	if err != nil {
@@ -195,6 +199,9 @@ func TestBatchChunksFirstThenAtomicTail(t *testing.T) {
 	if res.Latest.Ledger != s.Dump.DID.LedgerIndex {
 		t.Fatalf("manifest in ledger %d, anchor in ledger %d", res.Latest.Ledger, s.Dump.DID.LedgerIndex)
 	}
+	if !strings.EqualFold(res.Anchor.TxHashHex(), res.Latest.TxHash) {
+		t.Fatalf("anchor names manifest tx %s, the manifest's first part is %s", res.Anchor.TxHashHex(), res.Latest.TxHash)
+	}
 	for _, ch := range res.Latest.Manifest.OnChain.Chunks {
 		rec, err := e.ledger.Tx(ch.TxHash)
 		if err != nil {
@@ -215,6 +222,33 @@ func TestBatchChunksFirstThenAtomicTail(t *testing.T) {
 	orig, _ := os.ReadFile(o.ConfigPath)
 	if !plan.Files[0].Complete || string(plan.Files[0].Data) != string(orig) {
 		t.Fatalf("restored config differs (complete=%v)", plan.Files[0].Complete)
+	}
+}
+
+// TestBatchEightFitsOneBatch: rippled's limit is eight inner transactions,
+// and a backup that needs exactly eight is still one transaction.
+func TestBatchEightFitsOneBatch(t *testing.T) {
+	e := newEnv(t)
+	e.ledger.Batch = true
+	o := e.opts(t, 1)
+	o.ConfigPath, o.ValidatorsPath = bigConfig(t, 240), ""
+	p, err := Build(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memos, _, err := ManifestMemos(e.key.Key, p.BackupID, p.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(p.ChunkMemos) + len(memos) + 1; n != 8 {
+		t.Fatalf("fixture needs %d inner transactions, the test wants exactly 8", n)
+	}
+	s := &Submitter{Client: e.ledger, Writer: e.writer, Key: e.key, Batch: true, Sleep: func(time.Duration) {}}
+	if err := s.Submit(p); err != nil {
+		t.Fatal(err)
+	}
+	if e.ledger.Batches != 1 || e.ledger.Submitted != 1 {
+		t.Fatalf("submitted %d transactions in %d batches; eight fit in one", e.ledger.Submitted, e.ledger.Batches)
 	}
 }
 

@@ -97,7 +97,11 @@ func TestBatchSerializerRefusesWhatRippledRefuses(t *testing.T) {
 				tx.Inner = append(tx.Inner, tx.Inner[0])
 			}
 		},
-		"inner without flag":   func(tx *Tx) { tx.Inner[0].Flags = 0 },
+		"inner without flag": func(tx *Tx) { tx.Inner[0].Flags = 0 },
+		"inner without flag but with a key": func(tx *Tx) {
+			tx.Inner[0].Flags = 0
+			tx.Inner[0].SigningPubKey = good.SigningPubKey
+		},
 		"inner with fee":       func(tx *Tx) { tx.Inner[0].FeeDrops = 1 },
 		"inner signed":         func(tx *Tx) { tx.Inner[0].SigningPubKey = good.SigningPubKey },
 		"nested batch":         func(tx *Tx) { tx.Inner[0].Type = TxBatch },
