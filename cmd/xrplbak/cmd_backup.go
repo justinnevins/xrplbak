@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -92,6 +93,7 @@ func cmdBackup(args []string) error {
 	attest := fs.String("attestation", "", "hex signature over the attest string, made offline with validator-keys sign")
 	attestVPK := fs.String("attestation-key", "", "validator public key (nHB...) that made the attestation")
 	comments := fs.String("comments", "bundle", commentsFlagHelp)
+	batch := fs.String("batch", "auto", batchFlagHelp)
 	if err := fs.Parse(args); err != nil {
 		return parseError(err)
 	}
@@ -99,6 +101,11 @@ func cmdBackup(args []string) error {
 	mode, err := commentsMode(*comments, true)
 	if err != nil {
 		return err
+	}
+	switch *batch {
+	case "auto", "on", "off":
+	default:
+		return fail(exitUsage, "--batch must be auto, on or off, not %q", *batch)
 	}
 	cfgPath, err := findConfig(*config)
 	if err != nil {
@@ -153,7 +160,7 @@ func cmdBackup(args []string) error {
 			if seqErr != nil && !*forceSeq {
 				return fail(exitNetwork, "could not read existing backups (%v). Fix the server or pass --force-seq to submit as seq 1 anyway", seqErr)
 			}
-			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, warns)
+			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, *batch, warns)
 		}
 	}
 	return doDryRun(o, warns, *out)
@@ -223,7 +230,7 @@ func writeBundle(p *backup.Plan, out string) error {
 	return nil
 }
 
-func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor, yes bool, warns []string) error {
+func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor, yes bool, batch string, warns []string) error {
 	p, err := backup.Build(o)
 	if err != nil {
 		return err
@@ -232,9 +239,14 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 	for _, w := range warns {
 		fmt.Fprintln(stdout, "  WARNING:", w)
 	}
+	useBatch, batchNote, err := decideBatch(client, batch)
+	if err != nil {
+		return fail(exitNetwork, "%v", err)
+	}
 	hr("Submit")
 	fmt.Fprintf(stdout, "  server:  %s\n", source)
 	fmt.Fprintf(stdout, "  account: %s\n", writer.Address())
+	fmt.Fprintf(stdout, "  batch:   %s\n", batchNote)
 	if !yes && !confirm("  Submit these transactions?") {
 		return fail(exitUsage, "cancelled; nothing was submitted. In a script, pass --yes to answer this up front")
 	}
@@ -242,7 +254,7 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 		return err
 	}
 	dumpPath := filepath.Join(out, p.Manifest.BackupID+".dump.json")
-	s := &backup.Submitter{Client: client, Writer: writer, Key: o.Key, MaxFee: maxFee, DumpOut: dumpPath, Log: func(f string, a ...any) { fmt.Fprintf(stdout, "  "+f+"\n", a...) }}
+	s := &backup.Submitter{Client: client, Writer: writer, Key: o.Key, MaxFee: maxFee, DumpOut: dumpPath, Batch: useBatch, Log: func(f string, a ...any) { fmt.Fprintf(stdout, "  "+f+"\n", a...) }}
 	if prev, err := dump.Load(dumpPath); err == nil && prev.BackupID == p.Manifest.BackupID {
 		s.Dump = prev
 		fmt.Fprintf(stdout, "  resuming from %s (%d transaction(s) already validated)\n", dumpPath, len(prev.Txs))
@@ -267,6 +279,32 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 	fmt.Fprintln(stdout, "  keep safe:      the bundle file, the dump file, your recovery words or shares, and the account address")
 	fmt.Fprintln(stdout, "  verify anytime: xrplbak verify --rpc", strings.Fields(source)[0])
 	return nil
+}
+
+// batchFlagHelp: the atomic path is the default wherever the ledger offers
+// it. "off" is for a server whose feature RPC lies, or for testing the
+// one-transaction path; "on" refuses to run without it.
+const batchFlagHelp = "wrap the transactions in an all-or-nothing Batch (XLS-56): auto (when the server has the amendment, the default), on (refuse otherwise), off"
+
+// decideBatch turns the --batch flag and the server's amendment list into a
+// yes or no, with the sentence the operator sees. Unknown reads as no: an
+// answer the tool cannot get is not a reason to guess.
+func decideBatch(client xrpl.Client, flag string) (bool, string, error) {
+	if flag == "off" {
+		return false, "no (--batch=off); one transaction at a time", nil
+	}
+	enabled, err := client.AmendmentEnabled(xrpl.AmendmentBatchV1_1)
+	switch {
+	case err != nil && flag == "on":
+		return false, "", fmt.Errorf("--batch=on but the server's amendment list could not be read: %v", err)
+	case err != nil:
+		return false, fmt.Sprintf("no; the server's amendment list could not be read (%v); one transaction at a time", err), nil
+	case !enabled && flag == "on":
+		return false, "", errors.New("--batch=on but this server does not have the Batch amendment (BatchV1_1) enabled")
+	case !enabled:
+		return false, "no; this server does not have the Batch amendment enabled; one transaction at a time", nil
+	}
+	return true, "yes; all-or-nothing, the manifest and the anchor land together or not at all", nil
 }
 
 // commentsFlagHelp documents the one choice the operator has about their own

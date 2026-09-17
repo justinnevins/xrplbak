@@ -9,9 +9,27 @@ import (
 // fields this tool emits; anything else is an error. Used by tests and by
 // the offline fake, never on the submit path.
 func Deserialize(b []byte) (*Tx, error) {
-	tx := &Tx{}
 	r := &reader{b: b}
+	tx, err := r.object(false)
+	if err != nil {
+		return nil, err
+	}
+	if !r.done() {
+		return nil, errors.New("trailing bytes after the transaction")
+	}
+	return tx, nil
+}
+
+// object parses one transaction's fields. At the top level it reads to the
+// end of the input; inside a RawTransaction it stops at the object end
+// marker (0xE1), which it consumes.
+func (r *reader) object(nested bool) (*Tx, error) {
+	tx := &Tx{}
 	for !r.done() {
+		if nested && r.b[r.i] == 0xE1 {
+			r.i++
+			return tx, nil
+		}
 		typ, field, err := r.header()
 		if err != nil {
 			return nil, err
@@ -79,11 +97,47 @@ func Deserialize(b []byte) (*Tx, error) {
 				return nil, err
 			}
 			tx.Memos = memos
+		case typ == 15 && field == 30:
+			inner, err := r.rawTransactions()
+			if err != nil {
+				return nil, err
+			}
+			tx.Inner = inner
 		default:
 			return nil, fmt.Errorf("unknown field type %d field %d", typ, field)
 		}
 	}
+	if nested {
+		return nil, errors.New("inner transaction is not terminated")
+	}
 	return tx, nil
+}
+
+// rawTransactions parses the RawTransactions array: RawTransaction objects
+// (field 34) each ending in 0xE1, then the array end 0xF1.
+func (r *reader) rawTransactions() ([]*Tx, error) {
+	var out []*Tx
+	for {
+		if r.done() {
+			return nil, errors.New("RawTransactions is not terminated")
+		}
+		if r.b[r.i] == 0xF1 {
+			r.i++
+			return out, nil
+		}
+		typ, field, err := r.header()
+		if err != nil {
+			return nil, err
+		}
+		if typ != 14 || field != 34 {
+			return nil, fmt.Errorf("unexpected field type %d field %d inside RawTransactions", typ, field)
+		}
+		in, err := r.object(true)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, in)
+	}
 }
 
 type reader struct {

@@ -79,6 +79,31 @@ func (c *Client) call(method string, params map[string]any) (map[string]json.Raw
 	return res, nil
 }
 
+// AmendmentEnabled asks the feature RPC about one amendment. A server that
+// does not know the id, or refuses the call, answers with an error, which
+// the caller reads as "not enabled".
+func (c *Client) AmendmentEnabled(id string) (bool, error) {
+	res, err := c.call("feature", map[string]any{"feature": id})
+	if err != nil {
+		return false, err
+	}
+	// The answer is keyed by the amendment id: {"<id>": {"enabled": bool, ...}}.
+	var f struct {
+		Enabled *bool `json:"enabled"`
+	}
+	raw, ok := res[id]
+	if !ok {
+		raw, ok = res[strings.ToUpper(id)]
+	}
+	if !ok {
+		return false, fmt.Errorf("rpc feature: no entry for %s", id)
+	}
+	if err := json.Unmarshal(raw, &f); err != nil || f.Enabled == nil {
+		return false, fmt.Errorf("rpc feature: entry for %s has no enabled field", id)
+	}
+	return *f.Enabled, nil
+}
+
 // Submit sends a signed blob and returns the engine result code.
 func (c *Client) Submit(blob []byte) (string, error) {
 	res, err := c.call("submit", map[string]any{"tx_blob": strings.ToUpper(hex.EncodeToString(blob))})

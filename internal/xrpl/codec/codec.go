@@ -1,7 +1,8 @@
-// Package codec serializes the three transaction types xrplbak submits:
-// AccountSet (memo carrier), DIDSet (anchor), DIDDelete. Field codes come
-// from rippled include/xrpl/protocol/detail/sfields.macro. Fields are
-// written in canonical order: by type code, then field code.
+// Package codec serializes the four transaction types xrplbak submits:
+// AccountSet (memo carrier), DIDSet (anchor), DIDDelete, and Batch (the
+// atomic wrapper, XLS-56). Field codes come from rippled
+// include/xrpl/protocol/detail/sfields.macro. Fields are written in
+// canonical order: by type code, then field code.
 package codec
 
 import (
@@ -17,7 +18,19 @@ const (
 	TxAccountSet uint16 = 3
 	TxDIDSet     uint16 = 49
 	TxDIDDelete  uint16 = 50
+	TxBatch      uint16 = 71
 )
+
+// Batch flags (rippled TxFlags.h). An outer Batch carries exactly one of
+// the four mode flags; every inner transaction carries FlagInnerBatchTxn
+// and nothing else the tool sets.
+const (
+	FlagAllOrNothing  uint32 = 0x00010000
+	FlagInnerBatchTxn uint32 = 0x40000000
+)
+
+// MaxBatchInner is rippled's kMaxBatchTxCount (Protocol.h).
+const MaxBatchInner = 8
 
 // MaxMemosSerialized is the rippled limit on the serialized Memos array.
 const MaxMemosSerialized = 1024
@@ -43,7 +56,12 @@ type Tx struct {
 	DIDDocument        []byte // DIDSet only, unused by the tool
 	Data               []byte // DIDSet only
 	Memos              []Memo
+	Inner              []*Tx // Batch only: the RawTransactions array
 }
+
+// IsInner reports whether this transaction is an inner batch transaction:
+// unsigned, zero fee, and carrying FlagInnerBatchTxn.
+func (tx *Tx) IsInner() bool { return tx.Flags&FlagInnerBatchTxn != 0 }
 
 // Serialize writes the canonical binary form. If includeSignature is false,
 // TxnSignature is left out (the form that gets signed).
@@ -65,13 +83,26 @@ func Serialize(tx *Tx, includeSignature bool) ([]byte, error) {
 	if tx.FeeDrops >= 1<<62 {
 		return nil, errors.New("fee too large")
 	}
-	b = appendU64(b, (1<<62)|tx.FeeDrops)
-	if len(tx.SigningPubKey) != 33 {
+	if tx.IsInner() {
+		// rippled Batch::preflight: an inner transaction has a zero fee, an
+		// empty SigningPubKey, and no TxnSignature. The outer signature
+		// covers it.
+		if tx.FeeDrops != 0 {
+			return nil, errors.New("inner batch transaction must have a zero fee")
+		}
+		if len(tx.SigningPubKey) != 0 || len(tx.TxnSignature) != 0 {
+			return nil, errors.New("inner batch transaction must not be signed")
+		}
+		if tx.Type == TxBatch {
+			return nil, errors.New("a Batch cannot nest a Batch")
+		}
+	} else if len(tx.SigningPubKey) != 33 {
 		return nil, errors.New("SigningPubKey must be 33 bytes")
 	}
+	b = appendU64(b, (1<<62)|tx.FeeDrops)
 	b = appendHeader(b, 7, 3)
 	b = appendVL(b, tx.SigningPubKey)
-	if includeSignature {
+	if includeSignature && !tx.IsInner() {
 		if len(tx.TxnSignature) == 0 {
 			return nil, errors.New("transaction is not signed")
 		}
@@ -107,7 +138,51 @@ func Serialize(tx *Tx, includeSignature bool) ([]byte, error) {
 		}
 		b = append(b, m...)
 	}
+	if tx.Type == TxBatch {
+		r, err := serializeInner(tx.Inner)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, r...)
+	} else if len(tx.Inner) > 0 {
+		return nil, errors.New("only a Batch carries inner transactions")
+	}
 	return b, nil
+}
+
+// serializeInner writes the RawTransactions array (STArray field 30, each
+// entry an STObject RawTransaction, field 34). rippled requires at least
+// two entries and at most MaxBatchInner.
+func serializeInner(inner []*Tx) ([]byte, error) {
+	if len(inner) < 2 || len(inner) > MaxBatchInner {
+		return nil, fmt.Errorf("a Batch carries 2 to %d inner transactions, not %d", MaxBatchInner, len(inner))
+	}
+	var b []byte
+	b = appendHeader(b, 15, 30)
+	for _, in := range inner {
+		if !in.IsInner() {
+			return nil, errors.New("inner transaction lacks the tfInnerBatchTxn flag")
+		}
+		body, err := Serialize(in, false)
+		if err != nil {
+			return nil, err
+		}
+		b = appendHeader(b, 14, 34)
+		b = append(b, body...)
+		b = append(b, 0xE1)
+	}
+	return append(b, 0xF1), nil
+}
+
+// InnerHash returns the transaction hash of an inner batch transaction. It
+// has no signature, so the hash covers the whole serialized form, and it is
+// known before the batch is submitted.
+func InnerHash(in *Tx) (string, error) {
+	body, err := Serialize(in, false)
+	if err != nil {
+		return "", err
+	}
+	return Hash(body), nil
 }
 
 // SerializeMemos returns the Memos array bytes and enforces the 1 KB cap.

@@ -205,7 +205,11 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 		res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor points at seq %d but seq %d exists and authenticates; possible rollback by a writer-key holder. Using seq %d.", res.Anchor.Seq, res.Latest.Manifest.Seq, res.Latest.Manifest.Seq))
 	}
 	if res.AnchorOK && res.Latest == nil && res.Conflict == "" {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor names manifest tx %s (ledger %d) but that transaction is not in the searched range %d to %d", res.Anchor.TxHashHex(), res.Anchor.ManifestLedger, rng.Min, rng.Max))
+		where := fmt.Sprintf("ledger %d", res.Anchor.ManifestLedger)
+		if res.Anchor.ManifestLedger == 0 {
+			where = "batched with the anchor"
+		}
+		res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor names manifest tx %s (%s) but that transaction is not in the searched range %d to %d", res.Anchor.TxHashHex(), where, rng.Min, rng.Max))
 	}
 	if res.Rejected > 0 && res.Latest == nil {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("%d manifest(s) present but none authenticate: wrong recovery key, wrong epoch, or junk from a writer-key thief", res.Rejected))

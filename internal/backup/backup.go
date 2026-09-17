@@ -272,6 +272,12 @@ func ManifestMemos(key crypto.EpochKey, id []byte, m *manifest.Manifest) ([]code
 	return memos, plain, nil
 }
 
+// landed is a manifest part already on the ledger, found in the dump.
+type landed struct {
+	tx    dump.Tx
+	total uint16
+}
+
 // Submitter carries what Submit needs beyond the plan.
 type Submitter struct {
 	Client  xrpl.Client
@@ -282,6 +288,10 @@ type Submitter struct {
 	MaxFee  uint64
 	Dump    *dump.Dump // filled in as transactions validate
 	DumpOut string     // path to write the dump after every step
+	// Batch wraps the transactions in XLS-56 Batch transactions
+	// (tfAllOrNothing). The caller sets it only when the server reports the
+	// BatchV1_1 amendment enabled. See submitBatched.
+	Batch bool
 }
 
 // Submit sends chunks, then the manifest, then the anchor. Each step waits
@@ -295,10 +305,6 @@ func (s *Submitter) Submit(p *Plan) error {
 	// Resume: match chunk ciphertext hashes to already-recorded transactions,
 	// and collect manifest parts already on the ledger, grouped by nonce.
 	recorded := map[string]dump.Tx{}
-	type landed struct {
-		tx    dump.Tx
-		total uint16
-	}
 	manifestParts := map[[crypto.ManifestNonceLen]byte]map[uint16]landed{}
 	for _, t := range s.Dump.Txs {
 		rec, err := xrpl.ParseTxJSON(t.TxJSON, nil)
@@ -323,6 +329,9 @@ func (s *Submitter) Submit(p *Plan) error {
 	}
 
 	m := p.Manifest
+	if s.Batch {
+		return s.submitBatched(p, recorded, manifestParts)
+	}
 	for i, memo := range p.ChunkMemos {
 		if t, ok := recorded[m.OnChain.Chunks[i].SHA256]; ok {
 			m.OnChain.Chunks[i].TxHash, m.OnChain.Chunks[i].Ledger = t.Hash, t.LedgerIndex

@@ -59,7 +59,15 @@ type Client interface {
 	LedgerEntryDID(account string) (data []byte, err error)
 	AccountInfo(account string) (*AccountState, error)
 	ServerInfo() (*ServerState, error)
+	// AmendmentEnabled reports whether the server has the named amendment
+	// enabled. An error means the answer is unknown; callers treat unknown
+	// as not enabled.
+	AmendmentEnabled(id string) (bool, error)
 }
+
+// AmendmentBatchV1_1 is the amendment id of Batch (XLS-56), from the
+// feature RPC on mainnet, 2026-09-17.
+const AmendmentBatchV1_1 = "9F287AED3CDB50A7BD1ACEC24296A30C9B5230CCD136219317AC790E3B884377"
 
 // ParseTxJSON extracts the fields the tool needs from a transaction JSON
 // object in either api_version 1 (fields at top level) or 2 (tx_json).
