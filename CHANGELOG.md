@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix: the redaction plan printed by `backup` and `redact` names the lines before the first stanza instead of `[]`, and says when a move was only comments, the same wording the restore todo already used.
 - AEAD tag test: every single-byte change to a chunk, manifest part, or bundle frame is refused by the crypto layer, pinned in `internal/crypto` (the corpus rows prove refusal at the command level but the manifest field check masks the tag check there).
 - Adversarial corpus: 38 table-driven refusal cases in `cmd/xrplbak/corpus_test.go`, each asserting a named exit code. `main` is now `run(args, stdin, stdout, stderr) int` so tests drive the real command surface; flag errors return exit 1 instead of exiting inside the flag package.
 - Breaking: verify and restore refuse when two different backups authenticate at the same epoch and seq (exit 4) instead of picking the later one with a warning. New `--backup-id <hex prefix>` names one explicitly. `backup` picks the next seq above the disputed one.
