@@ -24,7 +24,8 @@ func TestMoveSummaryNamesTheNamelessStanzaAndSaysComment(t *testing.T) {
 	raw, err := os.ReadFile(w.cfgPath)
 	must(t, err)
 	const head = "# val-07.sfo, rack B2\n# console: ipmi at 10.44.0.7 (ops vlan)\n"
-	const tail = "\n[ledger_history]\n4096\n# retention agreed with 10.44.0.9's owner\n"
+	const tail = "\n[ledger_history]\n4096\n# retention agreed with 10.44.0.9's owner\n" +
+		"\n[overlay]\n# the NAT side, not the public one\npublic_ip = 10.44.0.7\n"
 	must(t, os.WriteFile(w.cfgPath, append(append([]byte(head), raw...), tail...), 0o600))
 
 	for _, mode := range []string{"onchain", "bundle"} {
@@ -39,7 +40,12 @@ func TestMoveSummaryNamesTheNamelessStanzaAndSaysComment(t *testing.T) {
 		if !strings.Contains(r.out, "before the first stanza") {
 			t.Fatalf("--comments=%s: the plan did not say where the nameless lines are:\n%s", mode, r.out)
 		}
-		if mode != "onchain" {
+		if mode == "bundle" {
+			// Default mode: [overlay] loses its private address and its
+			// comment. Say how many of the moved lines were prose.
+			if !strings.Contains(r.out, "[overlay]: 2 line(s) -> bundle, 1 of them comments") {
+				t.Fatalf("--comments=bundle: a mixed move is not counted:\n%s", r.out)
+			}
 			continue
 		}
 		// On-chain mode: the only lines that moved are comments, and the

@@ -382,7 +382,27 @@ func summarizeMoves(moves []redact.Move) {
 			fmt.Fprintf(stdout, "  %s\n", m.File)
 			last = m.File
 		}
-		fmt.Fprintf(stdout, "  [%s]: %d line(s) -> bundle (%s)\n", m.Stanza, m.Lines, m.Reason)
+		fmt.Fprintf(stdout, "  %s\n", moveLine(m))
+	}
+}
+
+// moveLine words one move the way the restore todo does (F-025, F-035):
+// content before the first header has no stanza name, and a move that was
+// only comments leaves every setting on-chain. The plan at backup time is
+// the one place an operator using --comments=onchain sees which of their
+// comments stayed off the ledger, so it has to say so. F-037.
+func moveLine(m redact.Move) string {
+	where := "[" + m.Stanza + "]"
+	if m.Stanza == "" {
+		where = "the lines before the first stanza"
+	}
+	switch {
+	case m.Comments >= m.Lines && m.Lines > 0:
+		return fmt.Sprintf("%s: %d comment line(s) -> bundle, comment only, every setting stays on-chain (%s)", where, m.Lines, m.Reason)
+	case m.Comments > 0:
+		return fmt.Sprintf("%s: %d line(s) -> bundle, %d of them comments (%s)", where, m.Lines, m.Comments, m.Reason)
+	default:
+		return fmt.Sprintf("%s: %d line(s) -> bundle (%s)", where, m.Lines, m.Reason)
 	}
 }
 
