@@ -129,7 +129,19 @@ Unit tests cover redaction refusals, chunk sizing, reassembly, truncated history
 
 ## MainNet vs future amendments
 
-v1 uses AccountSet, DIDSet, DIDDelete, account_tx, tx, and ledger_entry. All are live on MainNet (DID since 2024-10-30). Batch (BatchV1_1), DynamicMPT, and Sponsor are not enabled and are not used. MPT metadata was evaluated and rejected: 1024 immutable bytes with token semantics lose to DID's 256 mutable bytes. See [docs/mainnet-assumptions.md](docs/mainnet-assumptions.md).
+v1 uses AccountSet, DIDSet, DIDDelete, account_tx, tx, ledger_entry, and feature. All are live on MainNet (DID since 2024-10-30). Batch (BatchV1_1, XLS-56) is used wherever the server reports it enabled and skipped everywhere else; it reached majority on MainNet on 2026-09-15 and is live on Devnet. DynamicMPT and Sponsor are not used. MPT metadata was evaluated and rejected: 1024 immutable bytes with token semantics lose to DID's 256 mutable bytes. See [docs/mainnet-assumptions.md](docs/mainnet-assumptions.md).
+
+### Batch: one transaction, or none
+
+`backup --submit` checks whether the server has the Batch amendment. When it does, the chunks, the manifest parts and the DID anchor go out inside one all-or-nothing Batch transaction, so the ledger never holds an anchor without the manifest it names, or half a manifest. Up to eight transactions fit in a Batch; a backup that needs more sends its chunks in one Batch first, then the manifest and the anchor together. The fee is the per-transaction rate times the number of transactions plus two. `--max-fee` still caps the rate.
+
+```
+xrplbak backup --submit --rpc mainnet               # batched when the server offers it
+xrplbak backup --submit --rpc mainnet --batch=off   # one transaction at a time
+xrplbak backup --submit --rpc mainnet --batch=on    # refuse to run without Batch
+```
+
+Inside a Batch each inner transaction keeps its own hash and its own place in `account_tx`, so verify and restore read a batched backup exactly as they read an older one, from a server or from a dump file. A batched manifest records ledger 0 for a chunk that landed beside it, and a batched anchor records manifest ledger 0; those numbers are informational.
 
 ## Do not use this if
 

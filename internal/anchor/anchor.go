@@ -25,6 +25,10 @@ const Len = 1 + 16 + 32 + 4 + 4 + 4 + 16
 type Record struct {
 	BackupID       [16]byte
 	ManifestTxHash [32]byte
+	// ManifestLedger is the ledger that closed the manifest's first part,
+	// or 0 when the anchor and the manifest went out in one Batch and
+	// share a ledger the anchor could not know when it was built. Nothing
+	// reads it but the operator's report.
 	ManifestLedger uint32
 	Epoch          uint32
 	Seq            uint32

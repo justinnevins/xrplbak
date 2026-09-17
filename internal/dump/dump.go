@@ -163,3 +163,4 @@ func (c *Client) LedgerEntryDID(string) ([]byte, error) {
 
 func (c *Client) AccountInfo(string) (*xrpl.AccountState, error) { return nil, errOffline }
 func (c *Client) ServerInfo() (*xrpl.ServerState, error)         { return nil, errOffline }
+func (c *Client) AmendmentEnabled(string) (bool, error)          { return false, errOffline }
