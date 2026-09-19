@@ -102,7 +102,7 @@ Scripts branch on the code. Humans read the message.
 | 2 | network: the XRPL server could not be read |
 | 3 | refused: the input holds something the tool will not handle (a seed, PEM material, a restore marker, an unsafe path in a backup) |
 | 4 | authentication: nothing authenticates with this key, a chunk, manifest, bundle, or share fails its check, or two different backups claim the same seq |
-| 5 | incomplete: a chunk is missing from the searched history, or the newest backup is a tombstone |
+| 5 | incomplete: a chunk is missing from the searched history, or the newest backup is a tombstone. A restore that is only missing bundle content is PARTIAL, not incomplete, and exits 0 |
 | 6 | write: `--write` refused (file exists, two files share a name, target under /var/lib) or failed |
 
 When two different backups authenticate at the same epoch and seq, verify and restore refuse to pick one. Name the backup with `--backup-id <hex prefix>` after checking who else holds the writer key.
@@ -113,7 +113,7 @@ When two different backups authenticate at the same epoch and seq, verify and re
 2. Get the bundle file if you have it. Without it, restore still works, but the validator token and private topology must be re-entered.
 3. On the new host, build xrplbak from the tagged source. `xrplbak version` prints what a binary was built as; `dev` means an unstamped local build.
 4. Run `xrplbak restore --rpc mainnet --account <address> --bundle <file>`, or with `--dump <file>` in place of `--rpc` when you have the dump file and no server. Enter the words when asked. Read the report and the temp files.
-5. If the report marks a file PARTIAL, do the listed steps: regenerate the validator token from the master key, re-enter `[ips_fixed]` and admin lists. PARTIAL means content is missing from the file, not that the backup is damaged. That is exit code 5, and it is a different thing.
+5. If the report marks a file PARTIAL, do the listed steps: regenerate the validator token from the master key, re-enter `[ips_fixed]` and admin lists. PARTIAL means content that lived only in the bundle is missing from the file; the backup is not damaged. A bundle-less restore is the expected case and it exits 0, so do not read exit 0 as "nothing missing": read the PARTIAL lines and the steps. Exit code 5 is a different case, a chunk missing from the ledger or a tombstone, covered in the exit-code table above.
 6. Stop the old host if it still exists. One token, one running validator.
 7. Run `xrplbak restore ... --write --target /etc/xrpld`.
 8. Start xrpld. Confirm `server_info` shows the expected `pubkey_validator`.
