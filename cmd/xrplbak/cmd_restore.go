@@ -35,7 +35,7 @@ func addSourceFlags(fs *flag.FlagSet) *sourceFlags {
 		keyPass:    fs.Bool("key-passphrase", false, "prompt for the key file passphrase"),
 		wordsFile:  fs.String("words-file", "", "file with the 24 recovery words (default: prompt)"),
 		sharesFile: fs.String("shares-file", "", "file with recovery shares, one per line (default: prompt)"),
-		epoch:      fs.Int("epoch", -1, "epoch to start probing from (default: key file epoch or 0)"),
+		epoch:      fs.Int("epoch", -1, "epoch to start probing from; -1 means the key file's epoch, or 0 when there is no key file"),
 		backupID:   fs.String("backup-id", "", "use this backup (hex id or unique prefix) instead of the newest"),
 	}
 }
