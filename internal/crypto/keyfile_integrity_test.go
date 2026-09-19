@@ -63,7 +63,7 @@ func TestVersion1KeyFileIsNamedNotSilentlyRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("a version 1 file decoded")
 	}
-	if !strings.Contains(err.Error(), "version 1") || !strings.Contains(err.Error(), "rotate") {
+	if !strings.Contains(err.Error(), "version 1") || !strings.Contains(err.Error(), "xrplbak init") {
 		t.Fatalf("%q does not name version 1 and the way forward", err)
 	}
 }
