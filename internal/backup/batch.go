@@ -251,7 +251,7 @@ func (s *Submitter) anchorItem(p *Plan, m *manifest.Manifest, manifestHash strin
 	}
 	copy(rec.ManifestTxHash[:], hb)
 	data := anchor.Encode(s.Key.Key, rec)
-	tx := &codec.Tx{Type: codec.TxDIDSet, Data: data, Flags: codec.FlagInnerBatchTxn, Account: s.Writer.AccountID()}
+	tx := &codec.Tx{Type: codec.TxDIDSet, Data: data, Flags: codec.FlagInnerBatchTxn, Account: s.Writer.AccountID(), Memos: s.anchorMemos()}
 	return batchItem{kind: "anchor", tx: tx}, nil
 }
 
@@ -290,7 +290,7 @@ func (s *Submitter) sendAnchor(p *Plan, manifestHash string, manifestLedger uint
 	copy(rec.ManifestTxHash[:], hb)
 	data := anchor.Encode(s.Key.Key, rec)
 	s.Log("submitting DID anchor")
-	_, ledger, err := s.send(&codec.Tx{Type: codec.TxDIDSet, Data: data})
+	_, ledger, err := s.send(&codec.Tx{Type: codec.TxDIDSet, Data: data, Memos: s.anchorMemos()})
 	if err != nil {
 		return fmt.Errorf("anchor: %w", err)
 	}

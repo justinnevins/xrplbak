@@ -95,6 +95,9 @@ func DecodeAddress(addr string) ([]byte, error) {
 func EncodeAddress(id []byte) string { return EncodeBase58Check(prefixAccountID, id) }
 
 // DecodeNodePublic parses an "n..." validator or node public key (33 bytes).
+// EncodeNodePublic renders a 33-byte validator public key as its nHB... form.
+func EncodeNodePublic(pub []byte) string { return EncodeBase58Check(prefixNodePublic, pub) }
+
 func DecodeNodePublic(s string) ([]byte, error) {
 	pub, err := DecodeBase58Check(s, prefixNodePublic, 33)
 	if err != nil {

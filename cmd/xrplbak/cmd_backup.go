@@ -13,8 +13,10 @@ import (
 	"github.com/justinnevins/xrplbak/internal/cfg"
 	"github.com/justinnevins/xrplbak/internal/dump"
 	"github.com/justinnevins/xrplbak/internal/manifest"
+	"github.com/justinnevins/xrplbak/internal/pubattest"
 	"github.com/justinnevins/xrplbak/internal/redact"
 	"github.com/justinnevins/xrplbak/internal/xrpl"
+	"github.com/justinnevins/xrplbak/internal/xrpl/codec"
 	"github.com/justinnevins/xrplbak/internal/xrpl/sign"
 )
 
@@ -94,6 +96,8 @@ func cmdBackup(args []string) error {
 	attestVPK := fs.String("attestation-key", "", "validator public key (nHB...) that made the attestation")
 	comments := fs.String("comments", "bundle", commentsFlagHelp)
 	batch := fs.String("batch", "auto", batchFlagHelp)
+	attestPubKey := fs.String("attest-public-key", "", "validator public key (nHB..., ed25519) for a public on-chain attestation that this validator backs up")
+	attestPubSig := fs.String("attest-public-sig", "", "hex signature over the public attest string, made offline with validator-keys sign")
 	if err := fs.Parse(args); err != nil {
 		return parseError(err)
 	}
@@ -106,6 +110,23 @@ func cmdBackup(args []string) error {
 	case "auto", "on", "off":
 	default:
 		return fail(exitUsage, "--batch must be auto, on or off, not %q", *batch)
+	}
+	if (*attestPubSig != "") && (*attestPubKey == "") {
+		return fail(exitUsage, "--attest-public-sig needs --attest-public-key")
+	}
+	if *attestPubKey != "" {
+		pub, err := sign.DecodeNodePublic(*attestPubKey)
+		if err != nil {
+			return err
+		}
+		if len(pub) != 33 || pub[0] != 0xED {
+			return fail(exitUsage, "--attest-public-key must be an ed25519 validator key (nHB...); secp256k1 keys are not supported in v1")
+		}
+		if *attestPubSig != "" {
+			if b, err := hex.DecodeString(*attestPubSig); err != nil || len(b) != 64 {
+				return fail(exitUsage, "--attest-public-sig must be 64 bytes of hex")
+			}
+		}
 	}
 	cfgPath, err := findConfig(*config)
 	if err != nil {
@@ -126,7 +147,7 @@ func cmdBackup(args []string) error {
 	if writer.AccountID() == nil || sign.EncodeAddress(kf.AccountID[:]) != writer.Address() {
 		return fail(exitAuth, "key file is inconsistent: writer seed does not match the stored account")
 	}
-	o := backup.Options{ConfigPath: cfgPath, ValidatorsPath: findValidators(*validators, cfgPath), Includes: includes, Key: kf, Tombstone: *tombstone, Seq: 1, Comments: mode}
+	o := backup.Options{ConfigPath: cfgPath, ValidatorsPath: findValidators(*validators, cfgPath), Includes: includes, Key: kf, Tombstone: *tombstone, Seq: 1, Comments: mode, AttestPublicVPK: *attestPubKey}
 	if *vpk != "" {
 		pub, err := sign.DecodeNodePublic(*vpk)
 		if err != nil {
@@ -160,7 +181,7 @@ func cmdBackup(args []string) error {
 			if seqErr != nil && !*forceSeq {
 				return fail(exitNetwork, "could not read existing backups (%v). Fix the server or pass --force-seq to submit as seq 1 anyway", seqErr)
 			}
-			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, *batch, warns)
+			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, *batch, *attestPubKey, *attestPubSig, warns)
 		}
 	}
 	return doDryRun(o, warns, *out)
@@ -196,6 +217,15 @@ func planReport(p *backup.Plan, o backup.Options) {
 	hr("Attestation (optional, team setups)")
 	fmt.Fprintln(stdout, "  sign this exact string offline with validator-keys sign, then pass --attestation:")
 	fmt.Fprintln(stdout, "  "+p.AttestText)
+	if p.AttestPublicText != "" {
+		hr("Public attestation (optional, on-chain, cleartext)")
+		fmt.Fprintln(stdout, "  This publishes, in the clear and permanently, that your validator")
+		fmt.Fprintln(stdout, "  key vouches for this account's backups. The key is already public;")
+		fmt.Fprintln(stdout, "  the link between it and this account is what becomes public.")
+		fmt.Fprintln(stdout, "  Sign this exact string offline with validator-keys sign, then pass")
+		fmt.Fprintln(stdout, "  --attest-public-sig:")
+		fmt.Fprintln(stdout, "  "+p.AttestPublicText)
+	}
 }
 
 func doDryRun(o backup.Options, warns []string, out string) error {
@@ -230,12 +260,22 @@ func writeBundle(p *backup.Plan, out string) error {
 	return nil
 }
 
-func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor, yes bool, batch string, warns []string) error {
+func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor, yes bool, batch, attestPubKey, attestPubSig string, warns []string) error {
 	p, err := backup.Build(o)
 	if err != nil {
 		return err
 	}
 	planReport(p, o)
+	var attestMemo *codec.Memo
+	if attestPubSig != "" {
+		m, err := pubattest.Memo(attestPubKey, p.Manifest.Epoch, p.Manifest.Seq, p.Manifest.BackupID, attestPubSig)
+		if err != nil {
+			return fail(exitUsage, "%v", err)
+		}
+		attestMemo = &m
+	} else if attestPubKey != "" {
+		fmt.Fprintln(stdout, "  NOTE: no --attest-public-sig given, so no public attestation is published this run")
+	}
 	for _, w := range warns {
 		fmt.Fprintln(stdout, "  WARNING:", w)
 	}
@@ -254,7 +294,7 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 		return err
 	}
 	dumpPath := filepath.Join(out, p.Manifest.BackupID+".dump.json")
-	s := &backup.Submitter{Client: client, Writer: writer, Key: o.Key, MaxFee: maxFee, DumpOut: dumpPath, Batch: useBatch, Log: func(f string, a ...any) { fmt.Fprintf(stdout, "  "+f+"\n", a...) }}
+	s := &backup.Submitter{Client: client, Writer: writer, Key: o.Key, MaxFee: maxFee, DumpOut: dumpPath, Batch: useBatch, AttestMemo: attestMemo, Log: func(f string, a ...any) { fmt.Fprintf(stdout, "  "+f+"\n", a...) }}
 	if prev, err := dump.Load(dumpPath); err == nil && prev.BackupID == p.Manifest.BackupID {
 		s.Dump = prev
 		fmt.Fprintf(stdout, "  resuming from %s (%d transaction(s) already validated)\n", dumpPath, len(prev.Txs))

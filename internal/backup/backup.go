@@ -21,6 +21,7 @@ import (
 	"github.com/justinnevins/xrplbak/internal/discover"
 	"github.com/justinnevins/xrplbak/internal/dump"
 	"github.com/justinnevins/xrplbak/internal/manifest"
+	"github.com/justinnevins/xrplbak/internal/pubattest"
 	"github.com/justinnevins/xrplbak/internal/redact"
 	"github.com/justinnevins/xrplbak/internal/xrpl"
 	"github.com/justinnevins/xrplbak/internal/xrpl/codec"
@@ -47,6 +48,10 @@ type Options struct {
 	Supersedes string
 	// VPKSHA256 binds the backup to a validator identity without naming it.
 	VPKSHA256 string
+	// AttestPublicVPK is the validator public key (nHB...) for a public,
+	// cleartext attestation. When set, Build fills Plan.AttestPublicText
+	// with the exact string the validator master key must sign offline.
+	AttestPublicVPK string
 }
 
 // Plan is everything computable without the network.
@@ -60,6 +65,9 @@ type Plan struct {
 	Role       string
 	OnChainTxt map[string]string // path -> canonical on-chain text, for the report
 	AttestText string
+	// AttestPublicText is the string the validator master key signs for a
+	// public attestation, empty unless AttestPublicVPK was given.
+	AttestPublicText string
 }
 
 // Build reads, redacts, encodes, and encrypts. It never touches the network.
@@ -200,6 +208,9 @@ func Build(o Options) (*Plan, error) {
 		m.Bundle.Len = len(p.Bundle)
 	}
 	p.AttestText = manifest.AttestString(m.BackupID, m.OnChain.PlainSHA256, m.Bundle.PlainSHA256)
+	if o.AttestPublicVPK != "" {
+		p.AttestPublicText = pubattest.SignString(o.AttestPublicVPK, sign.EncodeAddress(o.Key.AccountID[:]), o.Key.Epoch, o.Seq, m.BackupID)
+	}
 	return p, nil
 }
 
@@ -292,6 +303,19 @@ type Submitter struct {
 	// (tfAllOrNothing). The caller sets it only when the server reports the
 	// BatchV1_1 amendment enabled. See submitBatched.
 	Batch bool
+	// AttestMemo, when set, is a cleartext public attestation memo attached
+	// to the DID anchor transaction. It carries no secret and is safe on a
+	// public ledger. See internal/pubattest.
+	AttestMemo *codec.Memo
+}
+
+// anchorMemos returns the memos to attach to the anchor transaction: the
+// public attestation, when the operator provided one.
+func (s *Submitter) anchorMemos() []codec.Memo {
+	if s.AttestMemo == nil {
+		return nil
+	}
+	return []codec.Memo{*s.AttestMemo}
 }
 
 // Submit sends chunks, then the manifest, then the anchor. Each step waits
@@ -380,7 +404,7 @@ func (s *Submitter) Submit(p *Plan) error {
 	copy(rec.ManifestTxHash[:], hb)
 	data := anchor.Encode(s.Key.Key, rec)
 	s.Log("submitting DID anchor")
-	_, ledger, err := s.send(&codec.Tx{Type: codec.TxDIDSet, Data: data})
+	_, ledger, err := s.send(&codec.Tx{Type: codec.TxDIDSet, Data: data, Memos: s.anchorMemos()})
 	if err != nil {
 		return fmt.Errorf("anchor: %w", err)
 	}
