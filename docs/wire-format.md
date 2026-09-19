@@ -55,11 +55,12 @@ See `internal/manifest`. Fields: v, epoch, seq, backup_id, created, tool, node{r
 u8 1 | backup_id(16) | manifest_tx_hash(32) | u32 manifest_ledger | u32 epoch | u32 seq | HMAC-SHA256(K_anchor, preceding bytes)[0:16]
 ```
 
-## Key file (XBKK, 77 bytes)
+## Key file (XBKK, 109 bytes)
 
 ```
-"XBKK" | u8 1 | u32 epoch | K_e(32) | account_id(20) | writer_seed(16)
+"XBKK" | u8 2 | u32 epoch | K_e(32) | account_id(20) | writer_seed(16) | SHA-256(preceding 77 bytes)
 ```
+The checksum detects a damaged file, so a flipped bit is reported as damage instead of decoding into a different key and reading as "no backup on the ledger". It is not a defence against a writer of the file; that writer holds the key. Version 1 (no checksum, 77 bytes) is refused with a message that names it.
 Optional wrap: `"XBKW" | u8 1 | salt(16) | AES-256-GCM(PBKDF2-HMAC-SHA256(passphrase, salt, 600000), zero nonce, plain, AAD "xrplbak/v1/keyfile")`.
 
 ## Attestation

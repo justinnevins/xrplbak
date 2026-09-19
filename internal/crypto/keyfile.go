@@ -5,6 +5,7 @@ import (
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -29,17 +30,37 @@ var (
 // convenience against casual disk reads, not the primary secret.
 const pbkdf2Iterations = 600_000
 
-const keyFileLen = 4 + 1 + 4 + KeyLen + 20 + 16
+// Layout, version 2: magic, version, epoch, epoch key, account id, writer
+// seed, then a SHA-256 over everything before it. The checksum is an
+// integrity check against a damaged file, not a defence against an
+// attacker who can write the file (such an attacker holds the key anyway).
+// Version 1 had no checksum, so a flipped bit decoded into a different key
+// and the operator was told the ledger held no backup.
+const (
+	keyFileVersion = 2
+	keyFileBodyLen = 4 + 1 + 4 + KeyLen + 20 + 16
+	keyFileV1Len   = keyFileBodyLen
+	keyFileLen     = keyFileBodyLen + sha256.Size
+)
+
+// ErrKeyFileDamaged is returned for a plain key file whose checksum does not
+// match its body. The message names the way forward. A restore never needs
+// the key file. Backups cannot resume from a damaged file, because it is
+// the only copy of the writer seed (rotate reads the old file too), so the
+// operator starts a new key file with init; the old backups stay
+// restorable with the old words.
+var ErrKeyFileDamaged = errors.New("key file is damaged (integrity check failed). To recover, restore with the recovery words, which needs no key file. To keep backing up, move the damaged file away and run \"xrplbak init\" for a new key file and account; the old backups stay restorable with the old words")
 
 // Encode renders the plain key file bytes.
 func (k *KeyFile) Encode() []byte {
 	b := append([]byte{}, keyMagic...)
-	b = append(b, 1)
+	b = append(b, keyFileVersion)
 	b = binary.BigEndian.AppendUint32(b, k.Epoch)
 	b = append(b, k.Key[:]...)
 	b = append(b, k.AccountID[:]...)
 	b = append(b, k.WriterSeed[:]...)
-	return b
+	sum := sha256.Sum256(b)
+	return append(b, sum[:]...)
 }
 
 // EncodeWrapped renders the key file encrypted under a passphrase.
@@ -91,11 +112,25 @@ func DecodeKeyFile(b []byte, passphrase []byte) (*KeyFile, error) {
 		}
 		b = plain
 	}
-	if len(b) != keyFileLen || !bytes.Equal(b[:4], keyMagic) {
+	if len(b) < 5 || !bytes.Equal(b[:4], keyMagic) {
 		return nil, errors.New("not an xrplbak key file")
 	}
-	if b[4] != 1 {
+	switch b[4] {
+	case 1:
+		if len(b) != keyFileV1Len {
+			return nil, errors.New("not an xrplbak key file")
+		}
+		return nil, errors.New("key file version 1 (written by a build without the checksum) has no integrity check and is no longer read. Restore with the recovery words if you need to, then move this file away and run \"xrplbak init\" for a new key file")
+	case keyFileVersion:
+	default:
 		return nil, fmt.Errorf("unsupported key file version %d", b[4])
+	}
+	if len(b) != keyFileLen {
+		return nil, errors.New("not an xrplbak key file")
+	}
+	sum := sha256.Sum256(b[:keyFileBodyLen])
+	if subtle.ConstantTimeCompare(sum[:], b[keyFileBodyLen:]) != 1 {
+		return nil, ErrKeyFileDamaged
 	}
 	k := &KeyFile{Epoch: binary.BigEndian.Uint32(b[5:9])}
 	copy(k.Key[:], b[9:9+KeyLen])
