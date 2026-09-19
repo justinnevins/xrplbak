@@ -70,6 +70,7 @@ xrplbak verify --rpc mainnet              # find and authenticate backups
 xrplbak verify --dump xrplbak-out/<id>.dump.json
 xrplbak restore --rpc mainnet --bundle xrplbak-out/<id>.bundle          # to a temp dir
 xrplbak restore --dump <dump> --bundle <bundle> --write --target /etc/xrpld
+xrplbak restore --rpc mainnet --account <address> --words-file words.txt  # fresh host: no key file
 ```
 
 The config path is auto-detected (`/etc/xrpld/xrpld.cfg`, then the legacy rippled paths). The key file is found next to the config or in the working directory. Every flag is listed by `xrplbak <command> -h`.
