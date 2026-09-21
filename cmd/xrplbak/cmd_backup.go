@@ -44,8 +44,12 @@ func cmdRedact(args []string) error {
 		return err
 	}
 	paths := []string{cfgPath}
-	if v := findValidators(*validators, cfgPath); v != "" {
-		paths = append(paths, v)
+	valPath, err := findValidators(*validators, cfgPath)
+	if err != nil {
+		return err
+	}
+	if valPath != "" {
+		paths = append(paths, valPath)
 	}
 	for _, p := range paths {
 		raw, err := os.ReadFile(p)
@@ -147,7 +151,11 @@ func cmdBackup(args []string) error {
 	if writer.AccountID() == nil || sign.EncodeAddress(kf.AccountID[:]) != writer.Address() {
 		return fail(exitAuth, "key file is inconsistent: writer seed does not match the stored account")
 	}
-	o := backup.Options{ConfigPath: cfgPath, ValidatorsPath: findValidators(*validators, cfgPath), Includes: includes, Key: kf, Tombstone: *tombstone, Seq: 1, Comments: mode, AttestPublicVPK: *attestPubKey}
+	valPath, err := findValidators(*validators, cfgPath)
+	if err != nil {
+		return err
+	}
+	o := backup.Options{ConfigPath: cfgPath, ValidatorsPath: valPath, Includes: includes, Key: kf, Tombstone: *tombstone, Seq: 1, Comments: mode, AttestPublicVPK: *attestPubKey}
 	if *vpk != "" {
 		pub, err := sign.DecodeNodePublic(*vpk)
 		if err != nil {

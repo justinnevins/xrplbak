@@ -197,11 +197,18 @@ func findConfig(explicit string) (string, error) {
 	return "", fail(exitUsage, "no config found in the usual places; pass --config PATH")
 }
 
-// findValidators resolves [validators_file] relative to the config, else
-// validators.txt beside it. Returns "" when none exists.
-func findValidators(explicit, configPath string) string {
+// findValidators resolves the validators file the way rippled does
+// (Config.cpp): an explicit --validators wins; else a [validators_file]
+// stanza names it, relative to the config's directory, and a named file
+// that is not there is an error, never a fallback; else validators.txt
+// beside the config if present; else "" and no complaint.
+//
+// A named-but-missing file refuses because rippled refuses to start in that
+// state, and because a stray validators.txt beside the config is not the
+// file the operator named (F-041).
+func findValidators(explicit, configPath string) (string, error) {
 	if explicit != "" {
-		return explicit
+		return explicit, nil
 	}
 	dir := filepath.Dir(configPath)
 	if raw, err := os.ReadFile(configPath); err == nil {
@@ -210,16 +217,17 @@ func findValidators(explicit, configPath string) string {
 			if !filepath.IsAbs(p) {
 				p = filepath.Join(dir, p)
 			}
-			if _, err := os.Stat(p); err == nil {
-				return p
+			if _, err := os.Stat(p); err != nil {
+				return "", fail(exitUsage, "config names [validators_file] %s but it does not exist; fix the config or pass --validators PATH", p)
 			}
+			return p, nil
 		}
 	}
 	p := filepath.Join(dir, "validators.txt")
 	if _, err := os.Stat(p); err == nil {
-		return p
+		return p, nil
 	}
-	return ""
+	return "", nil
 }
 
 // findKeyFile looks next to the config, then in the working directory.
