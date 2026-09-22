@@ -130,6 +130,24 @@ func (r Record) Verify(account string) bool {
 	return sign.VerifyEd25519(r.VPK, []byte(msg), r.Sig)
 }
 
+// Check reports whether sigHex is a valid signature by vpkNodePublic over
+// SignString for this backup. backup --submit runs it before publishing,
+// because an attestation is permanent and a signature that does not verify
+// is worse than none: it tells every third party the operator cannot sign
+// for the key they claim.
+func Check(vpkNodePublic, account string, epoch, seq uint32, backupID, sigHex string) bool {
+	vpk, err := sign.DecodeNodePublic(vpkNodePublic)
+	if err != nil {
+		return false
+	}
+	sig, err := hex.DecodeString(sigHex)
+	if err != nil || len(sig) != sigLen {
+		return false
+	}
+	msg := SignString(vpkNodePublic, account, epoch, seq, backupID)
+	return sign.VerifyEd25519(vpk, []byte(msg), sig)
+}
+
 // NodePublic renders the validator key as its nHB... form.
 func (r Record) NodePublic() string { return sign.EncodeNodePublic(r.VPK) }
 

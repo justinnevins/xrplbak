@@ -280,6 +280,13 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 		if err != nil {
 			return fail(exitUsage, "%v", err)
 		}
+		// An attestation is permanent. Refuse one that would read as INVALID
+		// to every third party (F-042). The string changes with the backup
+		// id, so a signature from an earlier dry run goes stale as soon as
+		// another backup lands in between.
+		if !pubattest.Check(attestPubKey, writer.Address(), p.Manifest.Epoch, p.Manifest.Seq, p.Manifest.BackupID, attestPubSig) {
+			return fail(exitUsage, "--attest-public-sig does not verify under %s for this backup; sign this exact string offline and pass the result:\n  %s", attestPubKey, p.AttestPublicText)
+		}
 		attestMemo = &m
 	} else if attestPubKey != "" {
 		fmt.Fprintln(stdout, "  NOTE: no --attest-public-sig given, so no public attestation is published this run")
