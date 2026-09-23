@@ -25,7 +25,14 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -show verbose ./...
+      - run: |
+          set -o pipefail
+          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -show verbose ./... 2>&1 | tee govulncheck.txt
+      - name: Report
+        if: always()
+        run: |
+          body=$(sed -e 's/%/%25/g' govulncheck.txt | awk 'BEGIN{ORS="%0A"}{print}')
+          echo "::notice title=govulncheck::${body}"
 
   # Common unsafe Go patterns. The text report goes to the log and the SARIF
   # report to the repository's code scanning page.
@@ -48,6 +55,28 @@ jobs:
         with:
           sarif_file: gosec.sarif
           category: gosec
+      - name: Report
+        if: always()
+        shell: python3 {0}
+        env:
+          SARIF: gosec.sarif
+          TITLE: gosec
+        run: |
+          import json, os
+          lines = []
+          try:
+              doc = json.load(open(os.environ["SARIF"]))
+              for run in doc.get("runs", []):
+                  for r in run.get("results", []):
+                      loc = (r.get("locations") or [{}])[0].get("physicalLocation", {})
+                      path = loc.get("artifactLocation", {}).get("uri", "-")
+                      line = loc.get("region", {}).get("startLine", 0)
+                      lines.append("%s %s:%s %s" % (r.get("ruleId"), path, line, r.get("message", {}).get("text", "").splitlines()[0][:300]))
+          except Exception as e:
+              lines.append("report unreadable: %s" % e)
+          body = "%d result(s)\n" % len(lines) + "\n".join(lines)
+          body = body.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          print("::notice title=%s::%s" % (os.environ["TITLE"], body))
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gosec
@@ -76,6 +105,28 @@ jobs:
         with:
           category: codeql
           output: codeql-results
+      - name: Report
+        if: always()
+        shell: python3 {0}
+        env:
+          SARIF: codeql-results/go.sarif
+          TITLE: codeql
+        run: |
+          import json, os
+          lines = []
+          try:
+              doc = json.load(open(os.environ["SARIF"]))
+              for run in doc.get("runs", []):
+                  for r in run.get("results", []):
+                      loc = (r.get("locations") or [{}])[0].get("physicalLocation", {})
+                      path = loc.get("artifactLocation", {}).get("uri", "-")
+                      line = loc.get("region", {}).get("startLine", 0)
+                      lines.append("%s %s:%s %s" % (r.get("ruleId"), path, line, r.get("message", {}).get("text", "").splitlines()[0][:300]))
+          except Exception as e:
+              lines.append("report unreadable: %s" % e)
+          body = "%d result(s)\n" % len(lines) + "\n".join(lines)
+          body = body.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          print("::notice title=%s::%s" % (os.environ["TITLE"], body))
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codeql
@@ -104,6 +155,28 @@ jobs:
         with:
           sarif_file: scorecard.sarif
           category: scorecard
+      - name: Report
+        if: always()
+        shell: python3 {0}
+        env:
+          SARIF: scorecard.sarif
+          TITLE: scorecard
+        run: |
+          import json, os
+          lines = []
+          try:
+              doc = json.load(open(os.environ["SARIF"]))
+              for run in doc.get("runs", []):
+                  for r in run.get("results", []):
+                      loc = (r.get("locations") or [{}])[0].get("physicalLocation", {})
+                      path = loc.get("artifactLocation", {}).get("uri", "-")
+                      line = loc.get("region", {}).get("startLine", 0)
+                      lines.append("%s %s:%s %s" % (r.get("ruleId"), path, line, r.get("message", {}).get("text", "").splitlines()[0][:300]))
+          except Exception as e:
+              lines.append("report unreadable: %s" % e)
+          body = "%d result(s)\n" % len(lines) + "\n".join(lines)
+          body = body.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          print("::notice title=%s::%s" % (os.environ["TITLE"], body))
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: scorecard
