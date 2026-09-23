@@ -12,7 +12,9 @@ The run aborts with exit code 3 and names the stanza and line.
 
 Whole stanzas: `[validator_token]`, `[validator_key_revocation]`, `[ips_fixed]`, `[cluster_nodes]`, `[rpc_startup]`, `[ssl_cert]`, `[peer_private]`, and every stanza not on the on-chain allowlist.
 
-Single lines inside allowed stanzas: `admin`, `secure_gateway`, `user`, `password`, `admin_user`, `admin_password`, `ssl_key`, `ssl_cert`, `ssl_chain` in `[port_*]`, any private or link-local address, `ip =` with a non-local listen address in `[port_*]`, hex runs of 64+ or base64 runs of 44+ characters outside the key stanzas.
+`[ips_fixed]` can go on-chain instead with `--peers=onchain`, which asks the operator to type `PUBLISH PEERS` before a backup. Its lines are then scanned one by one like any allowed stanza, so a private address, an internal name or a bare hostname still moves to the bundle. `[cluster_nodes]` and the validator token never follow.
+
+Single lines inside allowed stanzas: `admin` and `secure_gateway` (unless every entry is a loopback address, `127.0.0.0/8` or `::1`, which says nothing about the operator's network), `user`, `password`, `admin_user`, `admin_password`, `ssl_key`, `ssl_cert`, `ssl_chain` in `[port_*]`, any private or link-local address, `ip =` with a non-local listen address in `[port_*]`, hex runs of 64+ or base64 runs of 44+ characters outside the key stanzas.
 
 Hostnames follow two rules. A name ending in a suffix reserved for private networks moves wherever it appears: `.local`, `.localhost`, `.localdomain`, `.internal`, `.intranet`, `.lan`, `.home`, `.home.arpa`, `.corp`, `.private`, `.test`, `.onion`. A single-label name with no domain at all moves when it sits in a host-valued stanza (`[ips]`, `[ips_fixed]`, `[sntp_servers]`, `[cluster_nodes]`, `[validator_list_sites]`) or in `ip =` inside `[port_*]`; `localhost` is the one exception.
 
@@ -26,6 +28,6 @@ server, node_size, node_db, database_path, ledger_history, fetch_depth, path_sea
 
 Key stanzas exempt from the hex and base64 length scanners (the seed scanner still runs on them): validator_list_keys, validators, amendments, veto_amendments, cluster_nodes, validator_token, validator_key_revocation.
 
-## Canonical form
+## Byte fidelity
 
-Comments dropped, whitespace trimmed, LF endings, stanzas sorted by name, lines kept in order. A repeated stanza name continues the first one. Same input gives the same bytes. The manifest records the SHA-256 of the canonical original so restore can say "complete".
+The backup keeps the file exactly as written: comments, blank lines, indentation, line endings and stanza order. The manifest records the SHA-256 of the operator's original bytes, so restore can say `complete` only when the rebuilt file matches them byte for byte.

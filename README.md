@@ -97,10 +97,21 @@ The full checklist is in [docs/restore-ceremony.md](docs/restore-ceremony.md).
 | Where | What |
 |---|---|
 | Refused, never handled | validator-keys.json, `[validation_seed]`, `[node_seed]`, wallet.db, TLS private keys |
-| Bundle only, never on the ledger | `[validator_token]`, `[ips_fixed]`, `[cluster_nodes]`, `[rpc_startup]`, admin access lists, private addresses |
+| Bundle only, never on the ledger | `[validator_token]`, `[cluster_nodes]`, `[rpc_startup]`, admin access lists other than loopback, private addresses and internal hostnames |
+| Bundle by default, on the ledger if you ask | `[ips_fixed]` (with `--peers=onchain`) |
 | On the ledger, encrypted | everything else in `xrpld.cfg`, and `validators.txt` |
 
 Details: [docs/data-classification.md](docs/data-classification.md).
+
+### Fixed peers
+
+`[ips_fixed]` goes in the bundle by default. If your fixed peers are public hubs you do not mind naming, put them on the ledger so a bundle-less restore keeps them:
+
+```
+xrplbak backup --submit --rpc mainnet --peers=onchain
+```
+
+The tool asks you to type an acknowledgment first. Each peer line is still checked, so a private address or an internal hostname stays in the bundle.
 
 ### Comments
 

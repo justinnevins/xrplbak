@@ -43,6 +43,8 @@ type Options struct {
 	// Comments says where the operator's comments go. The zero value keeps
 	// them in the off-chain bundle.
 	Comments redact.Mode
+	// PeersOnChain puts public [ips_fixed] lines on-chain; see redact.Options.
+	PeersOnChain bool
 	// Seq and Supersedes come from discovery when a client is available.
 	Seq        uint32
 	Supersedes string
@@ -89,7 +91,7 @@ func Build(o Options) (*Plan, error) {
 		if err != nil {
 			return err
 		}
-		res, err := redact.Split(cfg.Parse(string(raw)), redact.Options{Comments: o.Comments})
+		res, err := redact.Split(cfg.Parse(string(raw)), redact.Options{Comments: o.Comments, PeersOnChain: o.PeersOnChain})
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}

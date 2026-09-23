@@ -51,6 +51,10 @@ const (
 // Options for one split.
 type Options struct {
 	Comments Mode
+	// PeersOnChain puts [ips_fixed] on-chain, line by line, after the
+	// operator acknowledges it. Each line is still scanned, so a private
+	// address or an internal hostname moves to the bundle anyway.
+	PeersOnChain bool
 }
 
 // Stanzas the tool refuses. Their presence means the operator is about to
@@ -223,7 +227,7 @@ func Split(f *cfg.File, opt Options) (*Result, error) {
 			}
 			keep(l)
 		case cfg.Value:
-			if why := valueReason(l.Stanza, l.Value); why != "" {
+			if why := valueReasonOpt(l.Stanza, l.Value, opt); why != "" {
 				move(l, MovedMarker, why)
 				continue
 			}
@@ -273,6 +277,19 @@ func refuse(f *cfg.File) error {
 		}
 	}
 	return nil
+}
+
+// peerStanzas may go on-chain line by line when the operator opts in with
+// PeersOnChain. [cluster_nodes] is not here: its lines name the node keys
+// of the operator's own cluster.
+var peerStanzas = map[string]bool{"ips_fixed": true}
+
+// valueReasonOpt is valueReason with the operator's opt-ins applied.
+func valueReasonOpt(stanza, value string, opt Options) string {
+	if opt.PeersOnChain && peerStanzas[stanza] {
+		return lineReason(stanza, value)
+	}
+	return valueReason(stanza, value)
 }
 
 // valueReason decides a setting line: the stanza allowlist first, then the
@@ -343,7 +360,7 @@ func isMarker(l cfg.Line) bool {
 // lineReason returns "" if the line may stay on-chain, else why it moves.
 func lineReason(stanza, line string) string {
 	key := strings.ToLower(strings.TrimSpace(strings.SplitN(line, "=", 2)[0]))
-	if strings.HasPrefix(stanza, "port_") && portSecretKeys[key] {
+	if strings.HasPrefix(stanza, "port_") && portSecretKeys[key] && !loopbackOnly(key, line) {
 		return "access list, credential, or key path"
 	}
 	if !keyStanzas[stanza] {
@@ -443,4 +460,43 @@ func hostValue(stanza, line string) string {
 		h = h[:i]
 	}
 	return strings.TrimSuffix(strings.ToLower(h), ".")
+}
+
+// loopbackOnly reports whether an admin or secure_gateway line lists only
+// loopback addresses (127.0.0.0/8 and ::1, as addresses or CIDR blocks
+// inside them). Such a list says nothing about the operator's network. An
+// empty list, a name, or any other address returns false.
+func loopbackOnly(key, line string) bool {
+	if key != "admin" && key != "secure_gateway" {
+		return false
+	}
+	i := strings.Index(line, "=")
+	if i < 0 {
+		return false
+	}
+	fields := strings.FieldsFunc(line[i+1:], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })
+	if len(fields) == 0 {
+		return false
+	}
+	loop4 := &net.IPNet{IP: net.IPv4(127, 0, 0, 0).To4(), Mask: net.CIDRMask(8, 32)}
+	for _, f := range fields {
+		if ip := net.ParseIP(f); ip != nil {
+			if !ip.IsLoopback() {
+				return false
+			}
+			continue
+		}
+		ip, n, err := net.ParseCIDR(f)
+		if err != nil || !ip.IsLoopback() {
+			return false
+		}
+		ones, bits := n.Mask.Size()
+		if bits == 32 && (ones < 8 || !loop4.Contains(n.IP)) {
+			return false
+		}
+		if bits == 128 && ones != 128 {
+			return false
+		}
+	}
+	return true
 }

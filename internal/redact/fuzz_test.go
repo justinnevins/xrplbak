@@ -29,8 +29,8 @@ func seedCorpus(f *testing.F) {
 func FuzzSplitMergeRoundTrip(f *testing.F) {
 	seedCorpus(f)
 	f.Fuzz(func(t *testing.T, text string) {
-		for _, mode := range []Mode{CommentsToBundle, CommentsOnChain} {
-			res, err := Split(cfg.Parse(text), Options{Comments: mode})
+		for _, opt := range []Options{{Comments: CommentsToBundle}, {Comments: CommentsOnChain}, {PeersOnChain: true}, {Comments: CommentsOnChain, PeersOnChain: true}} {
+			res, err := Split(cfg.Parse(text), opt)
 			if err != nil {
 				continue // a refusal is a correct outcome, not a counterexample
 			}
@@ -38,7 +38,7 @@ func FuzzSplitMergeRoundTrip(f *testing.F) {
 			on := cfg.Parse(res.OnChain.Render())
 			bundle := cfg.Parse(res.Bundle.Render())
 			if got := Merge(on, bundle).Render(); got != text {
-				t.Fatalf("mode %d: merge did not restore the original bytes:\nwant %q\ngot  %q", mode, text, got)
+				t.Fatalf("options %+v: merge did not restore the original bytes:\nwant %q\ngot  %q", opt, text, got)
 			}
 		}
 	})

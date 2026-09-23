@@ -26,7 +26,7 @@ func TestSplitValidator(t *testing.T) {
 		t.Fatal("role")
 	}
 	on := res.OnChain.Render()
-	for _, forbidden := range []string{"eyJ2YWxp", "10.20.30.40", "10.0.0.5", "peer.example.internal", "log_level", "admin =", "ntp1.lan", "xrpl-peer2"} {
+	for _, forbidden := range []string{"eyJ2YWxp", "10.20.30.40", "10.0.0.5", "peer.example.internal", "log_level", "admin = 127.0.0.1, 10.0.0.5", "ntp1.lan", "xrpl-peer2"} {
 		if strings.Contains(on, forbidden) {
 			t.Fatalf("on-chain text contains %q:\n%s", forbidden, on)
 		}
@@ -56,8 +56,9 @@ func TestSplitValidator(t *testing.T) {
 			t.Fatalf("only the admin line moves from port_ws_admin_local, got %d", m.Lines)
 		}
 	}
-	// port_rpc_admin_local keeps ip=127.0.0.1 on-chain, moves admin line.
-	if !strings.Contains(on, "[port_rpc_admin_local]\nport = 5005\nip = 127.0.0.1\n"+MovedMarker+"\nprotocol = http\n") {
+	// port_rpc_admin_local keeps ip=127.0.0.1 and its loopback-only admin
+	// line on-chain. The mixed admin line in port_ws_admin_local moved above.
+	if !strings.Contains(on, "[port_rpc_admin_local]\nport = 5005\nip = 127.0.0.1\nadmin = 127.0.0.1\nprotocol = http\n") {
 		t.Fatalf("port split:\n%s", on)
 	}
 }

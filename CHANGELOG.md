@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Redaction: an `admin` or `secure_gateway` line that lists only loopback addresses (127.0.0.0/8, ::1) stays on-chain. Any other address still moves the line to the bundle.
+- New `--peers=bundle|onchain` on `redact` and `backup`. `onchain` puts the public lines of `[ips_fixed]` on the ledger after the operator types `PUBLISH PEERS`. Private addresses and internal names still go to the bundle.
+- Docs: data-classification.md described the old canonical form; it now describes byte fidelity.
 - Build: Go 1.27.1. Go 1.24 no longer receives security fixes, and the v1.0.0 binaries built with go1.24.7 carry known standard library vulnerabilities, including in crypto/tls and net/url (govulncheck, binary mode).
 - Fix: `verify` and `restore` refuse an `--epoch` above 4294967295 with exit 1. A larger value wrapped to a different epoch without a word.
 - Warning: `verify` and `restore` with `--backup-id` warn when the named backup is from an older epoch than the newest one that authenticates, and warn again when it landed on the ledger after the first backup of the newer epoch. `init --rotate` keeps the writer account, so whoever kept the old key file can still post old-epoch backups that the recovery words authenticate. Exit codes are unchanged.

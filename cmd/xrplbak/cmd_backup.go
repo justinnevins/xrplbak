@@ -31,11 +31,16 @@ func cmdRedact(args []string) error {
 	validators := fs.String("validators", "", "path to validators.txt (default: from [validators_file] or beside the config)")
 	out := fs.String("out", "", "also write onchain/ and bundle/ copies into this directory")
 	comments := fs.String("comments", "bundle", commentsFlagHelp)
+	peers := fs.String("peers", "bundle", peersFlagHelp)
 	if err := fs.Parse(args); err != nil {
 		return parseError(err)
 	}
 
 	mode, err := commentsMode(*comments, false)
+	if err != nil {
+		return err
+	}
+	peersOn, err := peersMode(*peers, false)
 	if err != nil {
 		return err
 	}
@@ -56,7 +61,7 @@ func cmdRedact(args []string) error {
 		if err != nil {
 			return err
 		}
-		res, err := redact.Split(cfg.Parse(string(raw)), redact.Options{Comments: mode})
+		res, err := redact.Split(cfg.Parse(string(raw)), redact.Options{Comments: mode, PeersOnChain: peersOn})
 		if err != nil {
 			return fmt.Errorf("%s: %w", p, err)
 		}
@@ -99,6 +104,7 @@ func cmdBackup(args []string) error {
 	attest := fs.String("attestation", "", "hex signature over the attest string, made offline with validator-keys sign")
 	attestVPK := fs.String("attestation-key", "", "validator public key (nHB...) that made the attestation")
 	comments := fs.String("comments", "bundle", commentsFlagHelp)
+	peers := fs.String("peers", "bundle", peersFlagHelp)
 	batch := fs.String("batch", "auto", batchFlagHelp)
 	attestPubKey := fs.String("attest-public-key", "", "validator public key (nHB..., ed25519) for a public on-chain attestation that this validator backs up")
 	attestPubSig := fs.String("attest-public-sig", "", "hex signature over the public attest string, made offline with validator-keys sign")
@@ -107,6 +113,10 @@ func cmdBackup(args []string) error {
 	}
 
 	mode, err := commentsMode(*comments, true)
+	if err != nil {
+		return err
+	}
+	peersOn, err := peersMode(*peers, true)
 	if err != nil {
 		return err
 	}
@@ -155,7 +165,7 @@ func cmdBackup(args []string) error {
 	if err != nil {
 		return err
 	}
-	o := backup.Options{ConfigPath: cfgPath, ValidatorsPath: valPath, Includes: includes, Key: kf, Tombstone: *tombstone, Seq: 1, Comments: mode, AttestPublicVPK: *attestPubKey}
+	o := backup.Options{ConfigPath: cfgPath, ValidatorsPath: valPath, Includes: includes, Key: kf, Tombstone: *tombstone, Seq: 1, Comments: mode, PeersOnChain: peersOn, AttestPublicVPK: *attestPubKey}
 	if *vpk != "" {
 		pub, err := sign.DecodeNodePublic(*vpk)
 		if err != nil {
@@ -389,4 +399,32 @@ func commentsMode(v string, confirm bool) (redact.Mode, error) {
 		return redact.CommentsOnChain, nil
 	}
 	return 0, fail(exitUsage, "--comments must be bundle or onchain, not %q", v)
+}
+
+// peersFlagHelp documents where [ips_fixed] goes.
+const peersFlagHelp = "where [ips_fixed] goes: bundle (off-chain, the default) or onchain; private addresses and internal names move to the bundle either way"
+
+// peersAckPhrase is what the operator types to put fixed peers on a public ledger.
+const peersAckPhrase = "PUBLISH PEERS"
+
+// peersMode reads the --peers flag. Choosing onchain puts the public lines
+// of [ips_fixed] into the on-chain ciphertext, which is permanent and
+// readable by anyone who ever gets the key, so it is confirmed by hand. The
+// confirmation is skipped for redact, which encrypts and publishes nothing.
+func peersMode(v string, confirm bool) (bool, error) {
+	switch v {
+	case "bundle":
+		return false, nil
+	case "onchain":
+		if !confirm {
+			return true, nil
+		}
+		fmt.Fprintf(stdout, "--peers=onchain puts the public lines of [ips_fixed] into the on-chain\nciphertext. That is a public ledger: the bytes are permanent, and anyone\nwho ever obtains the backup key can read which peers this server pins.\nPrivate addresses and internal names still go to the off-chain bundle.\n\n")
+		if got := prompt("Type " + peersAckPhrase + " to continue: "); got != peersAckPhrase {
+			return false, fail(exitUsage, "--peers=onchain was not confirmed; nothing was submitted")
+		}
+		fmt.Fprintf(stdout, "  acknowledged: public fixed peers will be written on-chain\n")
+		return true, nil
+	}
+	return false, fail(exitUsage, "--peers must be bundle or onchain, not %q", v)
 }
