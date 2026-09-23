@@ -74,3 +74,25 @@ The signed bytes were confirmed against source on 2026-09-15:
 - `create_keys` always builds master keys with `KeyType::Ed25519` (ripple/validator-keys-tool `src/ValidatorKeysTool.cpp`, `createKeyFile`), so a key file from any current version verifies here.
 
 So verification is raw ed25519 over the ASCII attest string. `internal/xrpl/sign/vectors_test.go` pins this with a deterministic signature and asserts that the SHA-512Half variant does not verify. Key derivation is pinned against rippled's own 95 ed25519 test vectors in `tests/fixtures/rippled-ed25519-vectors.json`.
+
+## Public attestation memos
+
+Cleartext memos on the writer account's DID anchor transaction. The account is never in a memo: the verifier takes it from the transaction and rebuilds each signed string, so no record can be replayed under another account. All signatures are raw ed25519 over the ASCII string.
+
+Delegation, MemoType `xrplbak/v1/d`, signed once by the validator master key:
+
+    u8 version=1 | vpk(33) | u8 alg=1 (ed25519) | attest_pub(32) | u32 dseq | sig(64)
+    signed: xrplbak/v1/delegate <vpk nHB> <account r> ed25519 <attest_pub hex> <dseq>
+
+Attestation, MemoType `xrplbak/v1/a`, version 1, signed by the master key directly:
+
+    u8 version=1 | vpk(33) | u32 epoch | u32 seq | backup_id(16) | sig(64)
+    signed: xrplbak/v1/attest-public <vpk nHB> <account r> <epoch> <seq> <backup_id hex>
+
+Attestation, MemoType `xrplbak/v1/a`, version 2, signed by the delegated key:
+
+    u8 version=2 | vpk(33) | u32 dseq | u32 epoch | u32 seq | backup_id(16) | sig(64)
+    signed: xrplbak/v1/attest-delegated <vpk nHB> <account r> <dseq> <epoch> <seq> <backup_id hex>
+
+A version 2 attestation is valid when a delegation with the same vpk and dseq verifies under the master key for this account and appears earlier in the account history, no valid delegation with a higher dseq for that vpk appears earlier, and the signature verifies under the delegated key. Delegations do not expire. A higher dseq retires a key. The newest attestation in the history is the one judged.
+

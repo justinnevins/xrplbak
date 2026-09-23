@@ -35,7 +35,7 @@ func attestSubmit(t *testing.T, w *world, vpk, sigHex string) (error, int) {
 	ledger.Batch = true // one Batch instead of four sequential waits
 	ledger.Fund(w.writer.Address(), 5_000_000)
 	o := backup.Options{ConfigPath: w.cfgPath, ValidatorsPath: w.valPath, Key: w.key, Seq: 1, AttestPublicVPK: vpk}
-	err := doSubmit(o, ledger, "fake", w.writer, t.TempDir(), 0, false, true, "auto", vpk, sigHex, nil)
+	err := doSubmit(o, ledger, "fake", w.writer, t.TempDir(), 0, false, true, "auto", vpk, sigHex, nil, nil, "")
 	txs, _, _ := ledger.AccountTx(w.writer.Address())
 	return err, len(txs)
 }

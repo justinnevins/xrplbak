@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Public attestation by delegated key. `attest-key` creates an ed25519 attestation key and prints one string for the validator master key to sign offline. `backup --attest --attest-delegation-sig` publishes the delegation, and `backup --attest` attests later backups without the master key. A higher `--dseq` retires a stolen key. `attest-verify` checks the whole chain and accepts `--dump`. Master-key attestations (`--attest-public-key`) still work. Formats: docs/wire-format.md.
 - Redaction: an `admin` or `secure_gateway` line that lists only loopback addresses (127.0.0.0/8, ::1) stays on-chain. Any other address still moves the line to the bundle.
 - New `--peers=bundle|onchain` on `redact` and `backup`. `onchain` puts the public lines of `[ips_fixed]` on the ledger after the operator types `PUBLISH PEERS`. Private addresses and internal names still go to the bundle.
 - Docs: data-classification.md described the old canonical form; it now describes byte fidelity.

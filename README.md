@@ -70,11 +70,28 @@ xrplbak verify --dump xrplbak-out/<id>.dump.json
 xrplbak restore --rpc mainnet --bundle xrplbak-out/<id>.bundle          # to a temp dir
 xrplbak restore --dump <dump> --bundle <bundle> --write --target /etc/xrpld
 xrplbak restore --rpc mainnet --account <address> --words-file words.txt  # fresh host: no key file
+xrplbak attest-key --validator-key <nHB...>             # once: key for public attestations
+xrplbak backup --submit --rpc mainnet --attest          # attest this backup publicly
+xrplbak attest-verify --rpc mainnet --account <address>  # anyone: check an attestation
 ```
 
 The config path is found automatically (`/etc/xrpld/xrpld.cfg`, then the legacy rippled paths). The key file is found next to the config or in the working directory. `xrplbak <command> -h` lists every flag.
 
 An epoch is one generation of the host key. `init --rotate` starts the next one after a compromise. The recovery words open every epoch.
+
+## Public attestation
+
+A validator can publish, in the clear, that it backs up its configuration. Anyone can check it with `attest-verify`, using only the writer account address. It proves which validator vouches for the account and when the latest backup landed. It does not prove the operator can still restore.
+
+The validator master key stays in cold storage, as XRPL intends. It signs once, offline, to delegate to an attestation key that lives beside `xrplbak.key`, the same way it delegates to a validator token:
+
+1. `xrplbak attest-key --validator-key <nHB...>` writes `xrplbak-attest.key` and prints one string.
+2. On the offline machine, run `validator-keys sign "<that string>"`.
+3. `xrplbak backup --submit --rpc mainnet --attest --attest-delegation-sig <hex>` publishes the delegation with that backup.
+
+After that, `--attest` alone attests each backup. If the attestation key is stolen, run `attest-key --dseq 2` and repeat steps 2 and 3. The new delegation retires the old key from that ledger on. Attestations made before the replacement stay valid.
+
+The tool refuses to publish an attestation that would not verify.
 
 ## Recovering a lost host
 
@@ -154,7 +171,7 @@ A large quantum computer would break today's public-key signatures (ed25519, sec
 **Two parts are not quantum-safe:**
 
 - **The writer account.** Like every XRPL account today, it signs with ed25519. A quantum attacker could forge its transactions: post junk, move or delete the anchor, or spend its small balance. That is the same power as a stolen writer key. It cannot read or forge a backup. When the XRP Ledger offers post-quantum accounts, move the writer account to one.
-- **Public attestation.** An attestation is signed with the validator's own ed25519 master key. A quantum attacker could forge one, so attestations lose their proof value once such machines exist. An attestation can never be stronger than the validator key behind it. The attestation format is versioned, and xrplbak builds with Go 1.27, whose standard library includes ML-DSA (FIPS 204), so a post-quantum attestation needs no new dependency once XRPL validator keys support it.
+- **Public attestation.** An attestation is signed with ed25519, by an attestation key that the validator's ed25519 master key delegates to. A quantum attacker could forge either, so attestations lose their proof value once such machines exist. An attestation can never be stronger than the validator key behind it. The attestation format is versioned, and xrplbak builds with Go 1.27, whose standard library includes ML-DSA (FIPS 204), so a post-quantum attestation needs no new dependency once XRPL validator keys support it.
 
 The connection to your XRPL server uses TLS, which is not yet post-quantum either. It carries only data that is already encrypted.
 

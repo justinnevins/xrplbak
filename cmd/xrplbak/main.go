@@ -44,6 +44,7 @@ Commands
   backup    Plan a backup (dry run). Add --submit to write it to the ledger.
   verify    Check backups on the ledger (--rpc) or in a dump file (--dump).
   restore   Recover files to a temp dir (dry run). Add --write --target DIR to place them.
+  attest-key     Create the delegated attestation key; the master key signs it once.
   attest-verify  Check a validator's public backup attestation, no keys needed.
   version   Print the version this binary was built as. Compare it to the release tag.
 
@@ -112,6 +113,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 		err = cmdVerify(args[1:])
 	case "restore":
 		err = cmdRestore(args[1:])
+	case "attest-key":
+		err = cmdAttestKey(args[1:])
 	case "attest-verify":
 		err = cmdAttestVerify(args[1:])
 	case "version", "--version", "-v":

@@ -50,6 +50,10 @@ const (
 
 // Record is a decoded public attestation.
 type Record struct {
+	// Version is 1 for a master-key attestation, 2 for a delegated one.
+	Version byte
+	// DSeq names the delegation a version 2 attestation was signed under.
+	DSeq     uint32
 	VPK      []byte // 33-byte validator public key, ED-prefixed
 	Epoch    uint32
 	Seq      uint32
@@ -104,15 +108,22 @@ func Decode(m codec.Memo) (Record, bool) {
 	if string(m.Type) != MemoType {
 		return Record{}, false
 	}
-	if len(m.Data) != memoLen || m.Data[0] != Version {
+	switch {
+	case len(m.Data) == memoLen && m.Data[0] == Version:
+	case len(m.Data) == v2MemoLen && m.Data[0] == VersionDelegated:
+	default:
 		return Record{}, false
 	}
-	r := Record{VPK: make([]byte, vpkLen), Sig: make([]byte, sigLen)}
+	r := Record{Version: m.Data[0], VPK: make([]byte, vpkLen), Sig: make([]byte, sigLen)}
 	copy(r.VPK, m.Data[1:1+vpkLen])
 	if r.VPK[0] != 0xED {
 		return Record{}, false
 	}
 	off := 1 + vpkLen
+	if r.Version == VersionDelegated {
+		r.DSeq = binary.BigEndian.Uint32(m.Data[off : off+4])
+		off += 4
+	}
 	r.Epoch = binary.BigEndian.Uint32(m.Data[off : off+4])
 	r.Seq = binary.BigEndian.Uint32(m.Data[off+4 : off+8])
 	copy(r.BackupID[:], m.Data[off+8:off+24])
@@ -126,6 +137,9 @@ func Decode(m codec.Memo) (Record, bool) {
 // under the memo's validator key. A true result means the holder of that
 // validator key vouched for this account and this backup.
 func (r Record) Verify(account string) bool {
+	if r.Version != Version {
+		return false // a delegated attestation is checked by Evaluate
+	}
 	msg := SignString(r.NodePublic(), account, r.Epoch, r.Seq, hex.EncodeToString(r.BackupID[:]))
 	return sign.VerifyEd25519(r.VPK, []byte(msg), r.Sig)
 }

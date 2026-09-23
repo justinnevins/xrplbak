@@ -15,6 +15,7 @@ import (
 func cmdAttestVerify(args []string) error {
 	fs := newFlags("attest-verify", "check a validator's public backup attestation from the ledger, no keys needed")
 	rpcURL := fs.String("rpc", "", "XRPL JSON-RPC URL, or mainnet / testnet / devnet")
+	dumpPath := fs.String("dump", "", "offline dump file written by backup (instead of --rpc)")
 	account := fs.String("account", "", "the writer account that publishes the backups (r...)")
 	wantVPK := fs.String("validator-key", "", "optional: require the attestation to be by this validator key (nHB...)")
 	if err := fs.Parse(args); err != nil {
@@ -31,7 +32,7 @@ func cmdAttestVerify(args []string) error {
 			return fail(exitUsage, "--validator-key is not a valid node public key: %v", err)
 		}
 	}
-	client, source, err := openClient(*rpcURL, "")
+	client, source, err := openClient(*rpcURL, *dumpPath)
 	if err != nil {
 		return err
 	}
@@ -40,38 +41,19 @@ func cmdAttestVerify(args []string) error {
 		return fail(exitNetwork, "account_tx for %s: %v", *account, err)
 	}
 
-	// Newest wins: AccountTx returns oldest first, so the last valid memo is
-	// the current attestation.
-	var latest *pubattest.Record
-	var latestLedger uint32
-	for i := range txs {
-		t := txs[i]
-		if t.Account != *account || t.Result != "tesSUCCESS" {
-			continue
-		}
-		for _, m := range t.Memos {
-			r, ok := pubattest.Decode(m)
-			if !ok {
-				continue
-			}
-			if t.LedgerIndex >= latestLedger {
-				rec := r
-				latest = &rec
-				latestLedger = t.LedgerIndex
-			}
-		}
-	}
+	f := pubattest.Evaluate(txs, *account)
 
 	hr("Public attestation")
 	fmt.Fprintf(stdout, "  source:   %s\n", source)
 	fmt.Fprintf(stdout, "  account:  %s\n", *account)
 	fmt.Fprintf(stdout, "  searched: ledgers %d to %d\n", rng.Min, rng.Max)
-	if latest == nil {
+	if f.Status == pubattest.None {
 		fmt.Fprintln(stdout, "  result:   none. This account publishes no public backup attestation.")
 		return fail(exitRefused, "no public attestation found for %s", *account)
 	}
-	if !latest.Verify(*account) {
-		fmt.Fprintf(stdout, "  result:   INVALID signature, claiming validator %s\n", latest.NodePublic())
+	latest := f.Record
+	if f.Status == pubattest.Invalid {
+		fmt.Fprintf(stdout, "  result:   INVALID, claiming validator %s: %s\n", latest.NodePublic(), f.Reason)
 		return fail(exitAuth, "the attestation on %s does not verify", *account)
 	}
 	if *wantVPK != "" && !strings.EqualFold(*wantVPK, latest.NodePublic()) {
@@ -79,7 +61,12 @@ func cmdAttestVerify(args []string) error {
 		return fail(exitAuth, "attestation is by %s, not %s", latest.NodePublic(), *wantVPK)
 	}
 	fmt.Fprintf(stdout, "  result:   valid. Validator %s vouches for this account.\n", latest.NodePublic())
-	fmt.Fprintf(stdout, "  backup:   epoch %d seq %d, id %s, in ledger %d\n", latest.Epoch, latest.Seq, latest.BackupIDHex(), latestLedger)
+	if f.Delegated {
+		fmt.Fprintf(stdout, "  signed:   by delegated attestation key %d, which the master key delegated in ledger %d\n", f.Delegation.DSeq, f.DelegLedger)
+	} else {
+		fmt.Fprintln(stdout, "  signed:   by the validator master key directly")
+	}
+	fmt.Fprintf(stdout, "  backup:   epoch %d seq %d, id %s, in ledger %d\n", latest.Epoch, latest.Seq, latest.BackupIDHex(), f.Ledger)
 	fmt.Fprintln(stdout, "  note:     this proves identity, publication and recency. It does not prove the operator can still restore.")
 	return nil
 }

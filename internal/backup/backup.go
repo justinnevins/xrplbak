@@ -309,15 +309,23 @@ type Submitter struct {
 	// to the DID anchor transaction. It carries no secret and is safe on a
 	// public ledger. See internal/pubattest.
 	AttestMemo *codec.Memo
+	// DelegationMemo, when set, publishes a delegation to an attestation
+	// key. It rides the anchor transaction ahead of the attestation it
+	// makes valid. See internal/pubattest.
+	DelegationMemo *codec.Memo
 }
 
-// anchorMemos returns the memos to attach to the anchor transaction: the
-// public attestation, when the operator provided one.
+// anchorMemos returns the memos to attach to the anchor transaction: a
+// delegation, then the public attestation, when the operator provided them.
 func (s *Submitter) anchorMemos() []codec.Memo {
-	if s.AttestMemo == nil {
-		return nil
+	var out []codec.Memo
+	if s.DelegationMemo != nil {
+		out = append(out, *s.DelegationMemo)
 	}
-	return []codec.Memo{*s.AttestMemo}
+	if s.AttestMemo != nil {
+		out = append(out, *s.AttestMemo)
+	}
+	return out
 }
 
 // Submit sends chunks, then the manifest, then the anchor. Each step waits

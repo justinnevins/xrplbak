@@ -108,6 +108,9 @@ func cmdBackup(args []string) error {
 	batch := fs.String("batch", "auto", batchFlagHelp)
 	attestPubKey := fs.String("attest-public-key", "", "validator public key (nHB..., ed25519) for a public on-chain attestation that this validator backs up")
 	attestPubSig := fs.String("attest-public-sig", "", "hex signature over the public attest string, made offline with validator-keys sign")
+	attestDelegated := fs.Bool("attest", false, "publish a public attestation signed by the delegated attestation key (see xrplbak attest-key); the master key stays offline")
+	attestKeyPath := fs.String("attest-key", "", "attestation key file (default: "+attestKeyName+" beside xrplbak.key)")
+	delegSig := fs.String("attest-delegation-sig", "", "with --attest: the master key's hex signature over the delegation string, to publish the delegation with this backup")
 	if err := fs.Parse(args); err != nil {
 		return parseError(err)
 	}
@@ -124,6 +127,12 @@ func cmdBackup(args []string) error {
 	case "auto", "on", "off":
 	default:
 		return fail(exitUsage, "--batch must be auto, on or off, not %q", *batch)
+	}
+	if *delegSig != "" && !*attestDelegated {
+		return fail(exitUsage, "--attest-delegation-sig needs --attest")
+	}
+	if *attestDelegated && *attestPubKey != "" {
+		return fail(exitUsage, "choose one: --attest (delegated key, the default) or --attest-public-key (sign each backup with the master key)")
 	}
 	if (*attestPubSig != "") && (*attestPubKey == "") {
 		return fail(exitUsage, "--attest-public-sig needs --attest-public-key")
@@ -165,6 +174,16 @@ func cmdBackup(args []string) error {
 	if err != nil {
 		return err
 	}
+	var att *attestKey
+	if *attestDelegated {
+		p := *attestKeyPath
+		if p == "" {
+			p = filepath.Join(filepath.Dir(keyPath), attestKeyName)
+		}
+		if att, err = loadAttestKey(p); err != nil {
+			return err
+		}
+	}
 	o := backup.Options{ConfigPath: cfgPath, ValidatorsPath: valPath, Includes: includes, Key: kf, Tombstone: *tombstone, Seq: 1, Comments: mode, PeersOnChain: peersOn, AttestPublicVPK: *attestPubKey}
 	if *vpk != "" {
 		pub, err := sign.DecodeNodePublic(*vpk)
@@ -199,7 +218,14 @@ func cmdBackup(args []string) error {
 			if seqErr != nil && !*forceSeq {
 				return fail(exitNetwork, "could not read existing backups (%v). Fix the server or pass --force-seq to submit as seq 1 anyway", seqErr)
 			}
-			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, *batch, *attestPubKey, *attestPubSig, warns)
+			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, *batch, *attestPubKey, *attestPubSig, warns, att, *delegSig)
+		}
+	}
+	if att != nil {
+		hr("Delegated attestation")
+		fmt.Fprintf(stdout, "  key:        dseq %d for validator %s\n", att.DSeq, att.VPK)
+		if *delegSig == "" {
+			fmt.Fprintln(stdout, "  The delegation must already be on the ledger, or pass --attest-delegation-sig to publish it with this backup.")
 		}
 	}
 	return doDryRun(o, warns, *out)
@@ -278,13 +304,20 @@ func writeBundle(p *backup.Plan, out string) error {
 	return nil
 }
 
-func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor, yes bool, batch, attestPubKey, attestPubSig string, warns []string) error {
+func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor, yes bool, batch, attestPubKey, attestPubSig string, warns []string, att *attestKey, delegSig string) error {
 	p, err := backup.Build(o)
 	if err != nil {
 		return err
 	}
 	planReport(p, o)
-	var attestMemo *codec.Memo
+	var attestMemo, delegMemo *codec.Memo
+	if att != nil {
+		dm, am, err := delegatedMemos(client, writer.Address(), att, delegSig, p)
+		if err != nil {
+			return err
+		}
+		delegMemo, attestMemo = dm, am
+	}
 	if attestPubSig != "" {
 		m, err := pubattest.Memo(attestPubKey, p.Manifest.Epoch, p.Manifest.Seq, p.Manifest.BackupID, attestPubSig)
 		if err != nil {
@@ -319,7 +352,7 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 		return err
 	}
 	dumpPath := filepath.Join(out, p.Manifest.BackupID+".dump.json")
-	s := &backup.Submitter{Client: client, Writer: writer, Key: o.Key, MaxFee: maxFee, DumpOut: dumpPath, Batch: useBatch, AttestMemo: attestMemo, Log: func(f string, a ...any) { fmt.Fprintf(stdout, "  "+f+"\n", a...) }}
+	s := &backup.Submitter{Client: client, Writer: writer, Key: o.Key, MaxFee: maxFee, DumpOut: dumpPath, Batch: useBatch, AttestMemo: attestMemo, DelegationMemo: delegMemo, Log: func(f string, a ...any) { fmt.Fprintf(stdout, "  "+f+"\n", a...) }}
 	if prev, err := dump.Load(dumpPath); err == nil && prev.BackupID == p.Manifest.BackupID {
 		s.Dump = prev
 		fmt.Fprintf(stdout, "  resuming from %s (%d transaction(s) already validated)\n", dumpPath, len(prev.Txs))
@@ -427,4 +460,50 @@ func peersMode(v string, confirm bool) (bool, error) {
 		return true, nil
 	}
 	return false, fail(exitUsage, "--peers must be bundle or onchain, not %q", v)
+}
+
+// delegatedMemos builds the memos for a delegated attestation and refuses to
+// publish one that a third party would read as invalid. It judges the
+// result with the same rules attest-verify uses: the account's history plus
+// the anchor transaction about to be sent must yield a valid attestation.
+// A missing delegation, a signature that does not verify, or a key already
+// replaced by a higher dseq all stop the run before anything is submitted.
+func delegatedMemos(client xrpl.Client, account string, att *attestKey, delegSig string, p *backup.Plan) (*codec.Memo, *codec.Memo, error) {
+	var memos []codec.Memo
+	var deleg *codec.Memo
+	delegString := pubattest.DelegationString(att.VPK, account, att.pub(), att.DSeq)
+	if delegSig != "" {
+		if !pubattest.CheckDelegation(att.VPK, account, att.pub(), att.DSeq, delegSig) {
+			return nil, nil, fail(exitUsage, "--attest-delegation-sig does not verify under %s; sign this exact string offline and pass the result:\n  %s", att.VPK, delegString)
+		}
+		m, err := pubattest.DelegationMemo(att.VPK, att.pub(), att.DSeq, delegSig)
+		if err != nil {
+			return nil, nil, fail(exitUsage, "%v", err)
+		}
+		deleg = &m
+		memos = append(memos, m)
+	}
+	am, err := pubattest.DelegatedMemo(att.VPK, account, att.Priv, att.DSeq, p.Manifest.Epoch, p.Manifest.Seq, p.Manifest.BackupID)
+	if err != nil {
+		return nil, nil, fail(exitUsage, "%v", err)
+	}
+	memos = append(memos, am)
+	txs, _, err := client.AccountTx(account)
+	if err != nil {
+		return nil, nil, fail(exitNetwork, "account_tx for %s: %v", account, err)
+	}
+	var top uint32
+	for _, t := range txs {
+		if t.LedgerIndex > top {
+			top = t.LedgerIndex
+		}
+	}
+	next := append(append([]xrpl.TxRecord(nil), txs...), xrpl.TxRecord{Account: account, LedgerIndex: top + 1, Result: "tesSUCCESS", Memos: memos})
+	if f := pubattest.Evaluate(next, account); f.Status != pubattest.Valid {
+		if deleg == nil && strings.Contains(f.Reason, "no valid delegation") {
+			return nil, nil, fail(exitUsage, "no delegation for attestation key dseq %d is on the ledger yet. Sign this exact string offline with validator-keys sign and pass --attest-delegation-sig <hex>:\n  %s", att.DSeq, delegString)
+		}
+		return nil, nil, fail(exitAuth, "this attestation would not verify (%s); nothing was submitted", f.Reason)
+	}
+	return deleg, &am, nil
 }
