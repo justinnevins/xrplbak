@@ -46,7 +46,7 @@ make build
 sha256sum bin/*
 ```
 
-Go 1.24 or newer. `make build` is `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -buildid="`, so two people on two machines get the same bytes.
+Go 1.27.1, the version named in `go.mod`. An older `go` command downloads it automatically. `make build` is `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -buildid="`, so two people on two machines with the same Go version get the same bytes.
 
 Build from a git clone with the tag checked out, not from a source zip or tarball. Go stamps the commit hash and the module version into the binary, so a tree without `.git` produces different bytes and will not match the published checksums. v1.0.0 was reproduced this way on a second machine, byte for byte.
 

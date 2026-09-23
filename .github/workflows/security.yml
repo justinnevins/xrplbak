@@ -39,7 +39,7 @@ jobs:
       - name: Report
         if: always()
         run: |
-          body=$(sed -e 's/%/%25/g' govulncheck.txt | awk 'BEGIN{ORS="%0A"}{print}')
+          body=$(grep -E 'scanned the following|standard library:|^bin/|^Vulnerability #|Found in:|Fixed in:|No vulnerabilities|Your code' govulncheck.txt | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
           echo "::notice title=govulncheck::${body}"
 
   # Common unsafe Go patterns. The text report goes to the log and the SARIF
