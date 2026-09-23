@@ -69,7 +69,7 @@ func (sf *sourceFlags) choose(res *discover.Result, account string) (*discover.C
 }
 
 // warnStaleEpoch speaks up when --backup-id names a backup from an epoch
-// older than the newest one that authenticates (F-043). init --rotate keeps
+// older than the newest one that authenticates. init --rotate keeps
 // the writer account and seed, so whoever copied the old key file can keep
 // posting old-epoch backups, and the recovery words authenticate them. A
 // warning, not a refusal: the operator may be rolling back on purpose.
@@ -144,7 +144,7 @@ func (sf *sourceFlags) resolve() (*source, error) {
 		// Reaching here means no --account, no key file to take it from,
 		// and nothing on stdin. Passing the empty string on to the address
 		// decoder made the tool report a malformed address when none had
-		// been supplied at all. Both cold-read evaluators hit this.
+		// been supplied at all.
 		return nil, fail(exitUsage, "no writer account: pass --account r..., or --key with the key file that holds it. It is on the paper card beside the recovery words")
 	}
 	if _, derr := sign.DecodeAddress(s.account); derr != nil {
@@ -231,7 +231,7 @@ func reportAttestation(m *manifest.Manifest) {
 		fmt.Fprintln(stdout, "  attestation:   present, unverifiable in v1 (secp256k1 validator key)")
 		return
 	}
-	sig, _ := decodeHex(a.Sig)
+	sig, _ := hex.DecodeString(a.Sig)
 	msg := manifest.AttestString(m.BackupID, m.OnChain.PlainSHA256, m.Bundle.PlainSHA256)
 	if sign.VerifyEd25519(pub, []byte(msg), sig) {
 		fmt.Fprintf(stdout, "  attestation:   valid ed25519 signature by %s\n", a.VPK)
@@ -314,9 +314,8 @@ func cmdRestore(args []string) error {
 		// "INCOMPLETE" is the word the exit-code table uses for a missing
 		// on-chain chunk, which is a broken backup and exits 5. A restore
 		// without the bundle is neither: it is the expected, documented
-		// case and it exits 0. Using one word for both had the second
-		// cold-read evaluator reading the exit-code table twice to work
-		// out whether it had broken something.
+		// case and it exits 0. Two different meanings under one word made
+		// a correct, expected outcome read as a failure.
 		state := "complete"
 		if !f.Complete {
 			state = "PARTIAL"
@@ -368,5 +367,3 @@ func cmdRestore(args []string) error {
 	fmt.Fprintln(stdout, "  "+strings.Join(written, "\n  "))
 	return nil
 }
-
-func decodeHex(s string) ([]byte, error) { return hex.DecodeString(s) }

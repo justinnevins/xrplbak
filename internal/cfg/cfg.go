@@ -162,9 +162,6 @@ func Parse(text string) *File {
 			f.Lines[li].Kind = Comment
 			continue
 		}
-		if line == "" || (strings.HasPrefix(line, "#") && !strings.HasPrefix(line, MarkerPrefix)) {
-			continue
-		}
 		if looksLikeHeader(line) {
 			name := line[1 : len(line)-1]
 			// A repeated stanza name continues the first one, so split and

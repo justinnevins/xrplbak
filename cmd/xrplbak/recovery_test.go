@@ -9,10 +9,10 @@ import (
 	"github.com/justinnevins/xrplbak/internal/crypto"
 )
 
-// The four findings below all come from one Tier 2 pass over the recovery
-// paths. None of them writes a wrong byte; each of them tells the operator
-// something untrue or silently ignores what they asked for, during the one
-// ceremony they cannot practise.
+// These four cases cover the recovery paths: none of them writes a wrong
+// byte, but each one told the operator something untrue or silently
+// ignored what they asked for, during the one ceremony they cannot
+// practise.
 
 // TestThresholdWithoutSharesIsRefused pins a flag that did nothing. init
 // applied --threshold only inside the --shares branch, so

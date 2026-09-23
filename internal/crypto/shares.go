@@ -93,8 +93,8 @@ func encodeShare(threshold byte, splitID [2]byte, s []byte) string {
 // NormalizeShare puts a share into the one form the decoder reads. A share
 // is copied off paper by hand, so the characters people confuse are folded:
 // O becomes zero, I and L become one, and separators and case are dropped.
-// Exported because init's re-entry check has to apply exactly these rules;
-// a second copy of them drifted once already.
+// Exported so init's re-entry check applies exactly these rules. A second
+// copy would drift from this one.
 func NormalizeShare(s string) string {
 	return strings.ToUpper(strings.NewReplacer("-", "", " ", "", "O", "0", "I", "1", "L", "1").Replace(strings.TrimSpace(s)))
 }

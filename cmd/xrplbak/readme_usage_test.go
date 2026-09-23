@@ -9,11 +9,10 @@ import (
 	"testing"
 )
 
-// TestReadmeUsageShowsTheFreshHostRestore. The Usage block is what a fresh
-// operator copies from. Its restore lines showed only the shape that needs
-// a key file, and a fresh host has none: the sixth cold read copied the
-// line, then had to learn --account and --words-file from the ceremony
-// section further down. The block must carry the fresh-host shape.
+// TestReadmeUsageShowsTheFreshHostRestore pins that the README Usage block
+// includes the fresh-host restore line (--account plus --words-file), not
+// only the shape that needs a key file. A fresh host has no key file, and
+// the Usage block is what an operator copies from first.
 func TestReadmeUsageShowsTheFreshHostRestore(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
 	if err != nil {

@@ -6,8 +6,8 @@ import (
 )
 
 // TestBundlelessRestoreExitsZeroAndSaysPartial pins the exit-code contract the
-// README described ambiguously (F-038, fifth cold read). A restore without the
-// bundle is the expected, documented case: it exits 0 and prints PARTIAL. Exit
+// README described ambiguously. A restore without the bundle is the
+// expected, documented case: it exits 0 and prints PARTIAL. Exit
 // code 5 is a different case, a chunk missing from the ledger, and the corpus
 // pins that one. An operator scripting on the exit code must be able to trust
 // that 0 here does not mean "nothing missing"; the word PARTIAL and the steps

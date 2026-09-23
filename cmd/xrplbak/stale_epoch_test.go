@@ -9,14 +9,14 @@ import (
 	"github.com/justinnevins/xrplbak/internal/crypto"
 )
 
-// TestBackupIDOnStaleEpochWarns pins F-043. After init --rotate the writer
-// account and seed stay the same, so whoever copied the old key file can
-// keep posting backups at the old epoch. Those backups authenticate with the
-// recovery words. Cold read 7 showed an operator nearly picking one: it has
-// the highest seq and the latest timestamp. Naming it with --backup-id
-// restored the thief's file, reported complete, with no warning.
-//
-// Decision 2026-09-23 (Justin): warn, do not refuse. The exit code stays 0.
+// TestBackupIDOnStaleEpochWarns pins the stale-epoch warning. After
+// init --rotate the writer account and seed stay the same, so whoever
+// copied the old key file can keep posting backups at the old epoch, and
+// those backups still authenticate with the recovery words. Such a backup
+// can have the highest seq and the latest timestamp, so an operator naming
+// it with --backup-id could restore the thief's file, reported complete,
+// with no warning. The tool warns rather than refuses: the exit code
+// stays 0, because the operator may be rolling back on purpose.
 func TestBackupIDOnStaleEpochWarns(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	w := newWorld(t, 7) // epoch 0 seq 1, the operator's, before the rotation

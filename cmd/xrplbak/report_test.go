@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// TestNoAccountSaysWhatIsMissing pins the one message both cold-read
-// evaluators hit. With no --account and no key file, the tool prompted,
-// read nothing from a script's stdin, and reported "not a valid XRPL
-// classic address: " with nothing after the colon. It named a malformed
-// address when no address had been supplied at all.
+// TestNoAccountSaysWhatIsMissing pins the message for a run with no
+// --account, no key file, and nothing on stdin. It must say the account is
+// missing. It must not report "not a valid XRPL classic address: " with
+// nothing after the colon, which names a malformed address when none was
+// supplied.
 func TestNoAccountSaysWhatIsMissing(t *testing.T) {
 	w := newWorld(t, 0)
 	r := w.run("", "restore", "--dump", w.dumpFile("case"), "--words-file", w.words)
@@ -27,9 +27,9 @@ func TestNoAccountSaysWhatIsMissing(t *testing.T) {
 // TestBundleMissingIsNotCalledIncomplete pins a word that meant two things.
 // The per-file label said INCOMPLETE for the ordinary, expected case of a
 // restore without the bundle, while exit code 5 is documented as
-// "incomplete: a chunk is missing from the searched history". The second
-// evaluator read the exit-code table twice, unsure whether it had broken
-// something, because the run said INCOMPLETE and exited 0.
+// "incomplete: a chunk is missing from the searched history". Saying
+// INCOMPLETE and exiting 0 for the same run made a correct, expected
+// outcome read as a failure.
 func TestBundleMissingIsNotCalledIncomplete(t *testing.T) {
 	w := newWorld(t, 0)
 	r := w.run("yes\n", "restore", "--dump", w.dumpFile("case"),

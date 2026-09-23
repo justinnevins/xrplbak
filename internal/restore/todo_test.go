@@ -7,11 +7,10 @@ import (
 	"github.com/justinnevins/xrplbak/internal/manifest"
 )
 
-// TestNamelessStanzaTodoReadsLikeEnglish pins the second thing the cold-read
-// evaluation tripped over. Content that sits before the first stanza header
-// has no stanza name, so the todo line came out as "Re-enter []: 2 line(s)",
-// which reads like a template that failed to substitute. The evaluator had
-// to reverse-engineer what it meant.
+// TestNamelessStanzaTodoReadsLikeEnglish pins that content sitting before
+// the first stanza header, which has no stanza name, does not produce a
+// todo line like "Re-enter []: 2 line(s)", which reads like a template
+// that failed to substitute.
 func TestNamelessStanzaTodoReadsLikeEnglish(t *testing.T) {
 	m := &manifest.Manifest{}
 	m.Node.Role = "node"

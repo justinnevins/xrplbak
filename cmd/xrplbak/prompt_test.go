@@ -8,12 +8,13 @@ import (
 	"testing"
 )
 
-// TestPromptReadsSuccessiveLines pins the defect Tier 3 found on devnet.
-// Each prompt built its own bufio.Scanner over stdin. A Scanner reads ahead
-// into its own buffer, so the first prompt swallowed every answer that
-// followed and the next one saw end of input. On a terminal each read
-// returns a single line, so this never showed interactively; from a pipe or
-// a file every command that asks twice failed on its second question.
+// TestPromptReadsSuccessiveLines pins that consecutive prompts read
+// consecutive lines of stdin. Each prompt built its own bufio.Scanner over
+// stdin. A Scanner reads ahead into its own buffer, so the first prompt
+// swallowed every answer that followed and the next one saw end of input.
+// On a terminal each read returns a single line, so this never showed
+// interactively; from a pipe or a file every command that asks twice
+// failed on its second question.
 func TestPromptReadsSuccessiveLines(t *testing.T) {
 	defer swapStreams(strings.NewReader("first\nsecond\nthird\n"), io.Discard)()
 	for i, want := range []string{"first", "second", "third"} {
@@ -23,9 +24,9 @@ func TestPromptReadsSuccessiveLines(t *testing.T) {
 	}
 }
 
-// TestTwoPromptsFromAPipe drives the same defect through the real command
-// surface. init --key-passphrase asks for a passphrase and then for it
-// again; the second answer used to arrive empty, so the two never matched.
+// TestTwoPromptsFromAPipe drives the same case through the real command
+// surface: init --key-passphrase asks for a passphrase twice, and both
+// answers must be read correctly from a pipe.
 func TestTwoPromptsFromAPipe(t *testing.T) {
 	dir := t.TempDir()
 	var out strings.Builder

@@ -205,7 +205,7 @@ func findConfig(explicit string) (string, error) {
 //
 // A named-but-missing file refuses because rippled refuses to start in that
 // state, and because a stray validators.txt beside the config is not the
-// file the operator named (F-041).
+// file the operator named.
 func findValidators(explicit, configPath string) (string, error) {
 	if explicit != "" {
 		return explicit, nil
@@ -397,11 +397,11 @@ func summarizeMoves(moves []redact.Move) {
 	}
 }
 
-// moveLine words one move the way the restore todo does (F-025, F-035):
+// moveLine words one move the way the restore todo does:
 // content before the first header has no stanza name, and a move that was
 // only comments leaves every setting on-chain. The plan at backup time is
 // the one place an operator using --comments=onchain sees which of their
-// comments stayed off the ledger, so it has to say so. F-037.
+// comments stayed off the ledger, so it has to say so.
 func moveLine(m redact.Move) string {
 	where := "[" + m.Stanza + "]"
 	if m.Stanza == "" {

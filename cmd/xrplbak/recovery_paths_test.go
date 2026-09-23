@@ -1,18 +1,12 @@
 package main
 
-// The twenty-one recovery-path cases that held during the Tier 2 run of
-// 2026-09-16 (xrplbak-assurance runs/2026-09-16-tier2-recovery-paths.md).
-// That run filed five findings and left these twenty-one uncommitted,
-// because a test that has never been proven to fail is what the loop rules
-// forbid and there was no time for the proof.
+// Twenty-one recovery-path cases: the ways an operator can go wrong while
+// recovering, under pressure, after losing a host. Each case is proven by
+// mutation, breaking the guard it exists for and confirming the case goes
+// red, rather than by a captured failing run.
 //
-// None of them failed first, so each one is proven the other way: a
-// mutation pass broke the guard the case exists for and confirmed the case
-// goes red. The mutants and the survivors are recorded in the assurance
-// repo beside this commit.
-//
-// These are the paths an operator walks once, under pressure, after losing
-// a host. They are cheap to keep and expensive to rediscover.
+// These paths are walked once, under pressure. They are cheap to keep and
+// expensive to rediscover.
 
 import (
 	"os"

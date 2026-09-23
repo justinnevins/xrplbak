@@ -41,7 +41,7 @@ func TestCanonicalDropsEmptyNamelessStanza(t *testing.T) {
 	}
 }
 
-// TestHeaderWithTrailingComment was written for F-003 on the belief that
+// TestHeaderWithTrailingComment was written on the belief that
 // rippled accepts a trailing comment on a stanza header. It does not. Its
 // parseIniFile tests for a header on the raw trimmed line, first character
 // "[" and last character "]", before any comment is removed

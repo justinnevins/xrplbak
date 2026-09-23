@@ -7,17 +7,17 @@ import (
 	"testing"
 )
 
-// TestMoveSummaryNamesTheNamelessStanzaAndSaysComment pins F-037, from the
-// fourth cold read. The backup and redact plan printed
+// TestMoveSummaryNamesTheNamelessStanzaAndSaysComment pins that the backup
+// and redact plan does not print
 //
 //	[]: 1 line(s) -> bundle (private network address)
 //
 // for a comment above the first stanza that held a private address. The
-// restore todo learned to say "the lines before the first stanza" (F-025)
-// and to say when the moved line was only a comment (F-035); the plan the
-// operator reads at backup time never did. In --comments=onchain mode that
-// is the one line telling them a comment stayed off the ledger, and it
-// neither named the place nor said it was a comment.
+// plan must say "the lines before the first stanza" and say when the moved
+// line was only a comment, the same as the restore todo does. In
+// --comments=onchain mode that is the one line telling the operator that a
+// comment stayed off the ledger, and it must name the place and say it was
+// a comment.
 func TestMoveSummaryNamesTheNamelessStanzaAndSaysComment(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	w := newWorld(t, 0)

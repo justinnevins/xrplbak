@@ -133,9 +133,10 @@ func FuzzRippledReadingSurvivesCanonical(f *testing.F) {
 	})
 }
 
-// TestInlineCommentFormsMatchRippled pins F-005. rippled treats any
-// unescaped "#" as the start of an inline comment, needs no leading space,
-// and reads "\#" as a literal "#". The parser required a leading space, so
+// TestInlineCommentFormsMatchRippled pins that inline comments match
+// rippled. rippled treats any unescaped "#" as the start of an inline
+// comment, needs no leading space, and reads "\#" as a literal "#". The
+// parser required a leading space, so
 // the two disagreed about where a value ended.
 func TestInlineCommentFormsMatchRippled(t *testing.T) {
 	for _, text := range []string{
@@ -156,7 +157,7 @@ func TestInlineCommentFormsMatchRippled(t *testing.T) {
 	}
 }
 
-// TestHeaderTestUsesRawLine pins the half of F-005 that F-003 got wrong.
+// TestHeaderTestUsesRawLine pins that the header test uses the raw line.
 // rippled's parseIniFile tests for a header on the raw trimmed line: first
 // character "[", last character "]", no comment stripping. So
 // "[server] # ports" is a value line to rippled, not a header. Reading it as

@@ -204,10 +204,10 @@ func TestHostValue(t *testing.T) {
 	}
 }
 
-// TestEmptyStanzaRoundTrips pins the first defect the fuzz targets found.
-// An ordinary empty stanza header used to be "moved" to the bundle with no
-// content, which put a marker line into the restored file that the original
-// never had. Restore then reported a correct backup as changed.
+// TestEmptyStanzaRoundTrips pins that an empty stanza header is never
+// "moved" to the bundle. Moving it with no content would put a marker line
+// into the restored file that the original never had, making restore
+// report a correct backup as changed.
 func TestEmptyStanzaRoundTrips(t *testing.T) {
 	for _, text := range []string{
 		"[cluster_nodes]\n",
@@ -235,7 +235,7 @@ func TestEmptyStanzaRoundTrips(t *testing.T) {
 	}
 }
 
-// TestEmptyValidatorTokenIsNotAValidator pins F-004. An empty
+// TestEmptyValidatorTokenIsNotAValidator pins that an empty
 // [validator_token] stanza holds no token. Setting the role from the header
 // alone published "validator" in the manifest for a host that does not
 // validate, and made restore hand the operator two instructions about a
@@ -258,8 +258,9 @@ func TestEmptyValidatorTokenIsNotAValidator(t *testing.T) {
 	}
 }
 
-// TestInlineCommentDoesNotReachTheChain pins the redaction half of F-005.
-// rippled ends a value at the first unescaped "#", with no leading space
+// TestInlineCommentDoesNotReachTheChain pins that redaction respects
+// rippled's inline-comment rule. rippled ends a value at the first
+// unescaped "#", with no leading space
 // required, so text after it is operator prose the node never reads. It must
 // not be published on a public ledger.
 func TestInlineCommentDoesNotReachTheChain(t *testing.T) {

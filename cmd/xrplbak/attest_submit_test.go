@@ -1,6 +1,6 @@
 package main
 
-// F-042. backup --submit took any 64-byte --attest-public-sig and published
+// backup --submit took any 64-byte --attest-public-sig and published
 // it. A signature that does not verify under --attest-public-key (a paste
 // error, a signature over last week's string, the wrong key) went onto the
 // ledger permanently, and the operator learned of it only when a third

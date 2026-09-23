@@ -281,7 +281,7 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 			return fail(exitUsage, "%v", err)
 		}
 		// An attestation is permanent. Refuse one that would read as INVALID
-		// to every third party (F-042). The string changes with the backup
+		// to every third party. The string changes with the backup
 		// id, so a signature from an earlier dry run goes stale as soon as
 		// another backup lands in between.
 		if !pubattest.Check(attestPubKey, writer.Address(), p.Manifest.Epoch, p.Manifest.Seq, p.Manifest.BackupID, attestPubSig) {

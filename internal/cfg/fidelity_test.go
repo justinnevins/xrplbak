@@ -9,12 +9,9 @@ import (
 // reproduce the operator's file is not a backup, whatever its own hashes
 // say. Parse and Render must be exact inverses over arbitrary bytes:
 // comments, blank lines, line order, indentation and the choice of line
-// terminator all belong to the operator, not to the tool.
-//
-// Until 085cd96 this was false by construction. Parse skipped blank lines
-// and comment lines, dropped inline comments, and Canonical sorted stanzas
-// alphabetically, so the restored file was what the tool understood rather
-// than what the operator wrote.
+// terminator all belong to the operator, not to the tool. A parser that
+// skips blank lines or comments, or sorts stanzas, restores what the tool
+// understood rather than what the operator wrote.
 func FuzzParseRenderIsExact(f *testing.F) {
 	f.Add("[a]\nx\n")
 	f.Add("# why this box exists\n\n[server]   # the ports\nport_rpc\n")

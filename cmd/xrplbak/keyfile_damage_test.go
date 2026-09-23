@@ -7,11 +7,12 @@ import (
 	"testing"
 )
 
-// TestDamagedPlainKeyFileIsNamedDamaged. Same shape as F-027 for the
-// wrapped file, now for the plain one: a flipped bit inside the epoch key
-// used to decode cleanly into a different key, and verify then told the
-// operator the ledger held no backup. The operator must be sent to the
-// file, with the two ways forward (restore with the words, or init a new key file).
+// TestDamagedPlainKeyFileIsNamedDamaged pins the plain key file's checksum
+// check: a flipped bit inside the epoch key must be reported as file
+// damage, not silently decoded into a different key (which would make
+// verify report "no backup on the ledger"). The message must send the
+// operator to the file, with the two ways forward: restore with the words,
+// or init a new key file.
 func TestDamagedPlainKeyFileIsNamedDamaged(t *testing.T) {
 	w := newWorld(t, 0)
 	b, err := os.ReadFile(w.keyFile)

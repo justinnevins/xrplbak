@@ -108,12 +108,10 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, erro
 	return p, nil
 }
 
-// todoLine words one redaction for the operator. Three cold-read
-// evaluations shaped it. Content before the first header has no stanza
-// name, and "[]" read like a template that failed to fill in. With two
-// files in a backup, a flat list left the evaluator mapping items back to
-// files by hand. And a comment that moved was reported as a stanza to
-// re-enter, so a retention setting that was present read as lost.
+// todoLine words one redaction for the operator. Content before the first
+// header has no stanza name ("[]" reads like an unfilled template); with
+// two files in a backup, an item must name which file it belongs to; and a
+// comment-only move must not read as a missing setting.
 func todoLine(r manifest.Redaction, path string) string {
 	where := "[" + r.Stanza + "]"
 	if r.Stanza == "" {

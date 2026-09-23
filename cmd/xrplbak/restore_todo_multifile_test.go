@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// The third cold-read evaluation was the first with a two-file backup
-// (xrpld.cfg plus validators.txt) at a real path. Three things it tripped
-// over are pinned here.
+// Three defects in how the restore report attributes lines and stanzas to
+// files, found with a two-file backup (xrpld.cfg plus validators.txt) at a
+// real path.
 
 // todoLines returns the "Before starting the server" items of a report.
 func todoLines(out string) []string {
@@ -27,11 +27,11 @@ func todoLines(out string) []string {
 	return lines
 }
 
-// TestTodoNamesTheFileWhenTheBackupHasTwo pins F-034. With two files the
-// todo list was one flat list: "Re-enter the lines before the first stanza"
-// appeared twice, and "[validator_list_keys]" sat among xrpld.cfg stanzas
-// with nothing to say it belongs to validators.txt. The evaluator mapped
-// every item back by hand from the marker positions.
+// TestTodoNamesTheFileWhenTheBackupHasTwo pins that with two files the todo
+// list names which file each item belongs to. A flat list would leave
+// "Re-enter the lines before the first stanza" appearing twice, and
+// "[validator_list_keys]" sitting among xrpld.cfg stanzas with nothing to
+// say it belongs to validators.txt.
 func TestTodoNamesTheFileWhenTheBackupHasTwo(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	w := newWorld(t, 0)
@@ -66,12 +66,12 @@ func TestTodoNamesTheFileWhenTheBackupHasTwo(t *testing.T) {
 	}
 }
 
-// TestCommentOnlyRedactionIsNotAMissingSetting pins F-035. A comment inside
-// [ledger_history] moved to the bundle, so the todo said "Re-enter
-// [ledger_history]: 1 line(s) were kept only in the off-chain bundle" while
-// the setting itself, 512, was in the restored file. The evaluator concluded
-// a retention value had been lost. The todo must say when only a comment is
-// missing, and it must not tell the operator to re-enter what is there.
+// TestCommentOnlyRedactionIsNotAMissingSetting pins that when a comment
+// inside [ledger_history] moves to the bundle, the todo must say when only
+// a comment is missing, and it must not tell the operator to re-enter what
+// is there. A flat "Re-enter [ledger_history]: 1 line(s) were kept only in
+// the off-chain bundle" message would read as a lost retention value even
+// though the setting itself is present in the restored file.
 func TestCommentOnlyRedactionIsNotAMissingSetting(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	w := newWorld(t, 0)
@@ -103,10 +103,9 @@ func TestCommentOnlyRedactionIsNotAMissingSetting(t *testing.T) {
 	}
 }
 
-// TestAccountHelpDoesNotPointAtTheKeyFile pins F-036, the second cold-read
-// evaluator's remark that the --account default "from the key file" is the
-// wrong default for the one situation restore exists for, and the third
-// evaluator's identical remark a day later. A recovery has no key file.
+// TestAccountHelpDoesNotPointAtTheKeyFile pins that the --account default
+// "from the key file" is the wrong default for the one situation restore
+// exists for: a recovery has no key file.
 func TestAccountHelpDoesNotPointAtTheKeyFile(t *testing.T) {
 	w := newWorld(t, 0)
 	for _, sub := range []string{"restore", "verify"} {
@@ -120,8 +119,8 @@ func TestAccountHelpDoesNotPointAtTheKeyFile(t *testing.T) {
 	}
 }
 
-// TestUsageListsVersion: the tool has a version command and the usage text
-// did not mention it, so the evaluator could not tell what it was running.
+// TestUsageListsVersion pins that the usage text lists the version command,
+// so an operator can tell what they are running.
 func TestUsageListsVersion(t *testing.T) {
 	w := newWorld(t, 0)
 	r := w.run("", "help")

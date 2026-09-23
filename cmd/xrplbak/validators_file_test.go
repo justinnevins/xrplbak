@@ -1,6 +1,6 @@
 package main
 
-// F-041. A [validators_file] stanza that names a file which does not exist
+// A [validators_file] stanza that names a file which does not exist
 // must refuse, not fall through to validators.txt beside the config and not
 // proceed as if the config named nothing. rippled itself refuses to start in
 // that state (Config.cpp: "The file specified in [validators_file] does not

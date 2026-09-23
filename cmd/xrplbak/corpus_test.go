@@ -1,15 +1,14 @@
 package main
 
-// The Tier 1 adversarial corpus. Every row is one hostile or malformed input
+// The adversarial corpus. Every row is one hostile or malformed input
 // driven through the real command surface, and every row asserts a named
 // exit code plus a message fragment, not merely "an error". The rows that
 // expect exitOK are the cases where the tool must refuse one object (a
 // forged anchor) and still recover from the authentic remainder; those rows
 // also assert that the tampered object was reported as rejected.
 //
-// Rules from the assurance loop apply: a row that passed on first write was
-// made to fail first (see xrplbak-assurance for the failing commits), and
-// rows are never weakened or deleted.
+// Every row here was made to fail before it was made to pass, and rows are
+// never weakened or deleted.
 
 import (
 	"bytes"

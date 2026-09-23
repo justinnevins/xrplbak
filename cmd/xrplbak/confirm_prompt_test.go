@@ -7,12 +7,11 @@ import (
 	"testing"
 )
 
-// TestWriteCanBeConfirmedUpFront pins the trap the first cold-read
-// evaluation hit. --write and --submit both stop on a yes/no question that
-// their own flag help does not mention. A script that does not know to pipe
-// an answer gets "cancelled; nothing was written", which reads as the
-// operator's doing rather than the tool's. init already has --yes; restore
-// and backup did not.
+// TestWriteCanBeConfirmedUpFront pins that --write and --submit can be
+// confirmed up front. Both stop on a yes/no question that their own flag
+// help does not mention, so a script that pipes no answer gets "cancelled;
+// nothing was written", which reads as the operator's mistake rather than
+// the tool's. init already has --yes; restore and backup did not.
 func TestWriteCanBeConfirmedUpFront(t *testing.T) {
 	w := newWorld(t, 0)
 	target := filepath.Join(w.dir, "placed")
@@ -34,8 +33,8 @@ func TestWriteCanBeConfirmedUpFront(t *testing.T) {
 	}
 }
 
-// TestCancelMessageNamesTheWayOut keeps the dead end from being a dead end.
-// Whoever hits the prompt from a script is told what to pass instead.
+// TestCancelMessageNamesTheWayOut pins that whoever hits the prompt from a
+// script is told what to pass instead.
 func TestCancelMessageNamesTheWayOut(t *testing.T) {
 	w := newWorld(t, 0)
 	target := filepath.Join(w.dir, "placed")
