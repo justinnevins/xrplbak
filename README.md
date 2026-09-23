@@ -109,6 +109,8 @@ The tool refuses to publish an attestation that would not verify.
 
 The full checklist is in [docs/restore-ceremony.md](docs/restore-ceremony.md).
 
+Running xrpld in Docker? Run xrplbak on the host against the mounted config folder. See [docs/docker.md](docs/docker.md).
+
 ## What goes where
 
 | Where | What |
