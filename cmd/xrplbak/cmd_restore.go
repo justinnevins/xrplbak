@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 
@@ -151,6 +152,8 @@ func (sf *sourceFlags) resolve() (*source, error) {
 		return nil, fail(exitUsage, "%v", derr)
 	}
 	switch {
+	case *sf.epoch > math.MaxUint32:
+		return nil, fail(exitUsage, "--epoch must be at most %d", uint32(math.MaxUint32))
 	case *sf.epoch >= 0:
 		s.hint = uint32(*sf.epoch)
 	case *sf.epoch != -1:
