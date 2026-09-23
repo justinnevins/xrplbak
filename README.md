@@ -111,6 +111,8 @@ The full checklist is in [docs/restore-ceremony.md](docs/restore-ceremony.md).
 
 Running xrpld in Docker? Run xrplbak on the host against the mounted config folder. See [docs/docker.md](docs/docker.md).
 
+Working with an AI assistant? Give it [docs/ai-assistant-guide.md](docs/ai-assistant-guide.md). It tells the assistant what it may run, what only you run, and which secrets it must never see.
+
 ## What goes where
 
 | Where | What |
