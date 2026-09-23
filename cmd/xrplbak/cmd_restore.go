@@ -56,6 +56,7 @@ func (sf *sourceFlags) choose(res *discover.Result, account string) (*discover.C
 		if hit == nil {
 			return nil, fail(exitAuth, "no authenticated backup has id %s", want)
 		}
+		warnStaleEpoch(res, hit)
 		return hit, nil
 	}
 	if res.Conflict != "" {
@@ -65,6 +66,35 @@ func (sf *sourceFlags) choose(res *discover.Result, account string) (*discover.C
 		return nil, fail(exitAuth, "no backup authenticates for %s with this key in the searched range. Check the account address, the recovery key, and the epoch", account)
 	}
 	return res.Latest, nil
+}
+
+// warnStaleEpoch speaks up when --backup-id names a backup from an epoch
+// older than the newest one that authenticates (F-043). init --rotate keeps
+// the writer account and seed, so whoever copied the old key file can keep
+// posting old-epoch backups, and the recovery words authenticate them. A
+// warning, not a refusal: the operator may be rolling back on purpose.
+func warnStaleEpoch(res *discover.Result, hit *discover.Candidate) {
+	newest := hit.Epoch
+	for _, c := range res.Candidates {
+		if c.Epoch > newest {
+			newest = c.Epoch
+		}
+	}
+	if newest == hit.Epoch {
+		return
+	}
+	var first *discover.Candidate // earliest-landed backup of the newest epoch
+	for _, c := range res.Candidates {
+		if c.Epoch == newest && (first == nil || c.Ledger < first.Ledger) {
+			first = c
+		}
+	}
+	fmt.Fprintf(stdout, "  WARNING: backup %s is from epoch %d, but a backup from epoch %d exists. Epoch %d means the key was rotated. Anyone who kept the old key file can still post epoch %d backups. Restore this one only if you know you wrote it.\n",
+		hit.Manifest.BackupID[:16], hit.Epoch, newest, newest, hit.Epoch)
+	if hit.Ledger > 0 && first.Ledger > 0 && hit.Ledger > first.Ledger {
+		fmt.Fprintf(stdout, "  WARNING: backup %s landed on the ledger after the first epoch %d backup (ledger %d, after %d). Someone used the old key after the rotation.\n",
+			hit.Manifest.BackupID[:16], newest, hit.Ledger, first.Ledger)
+	}
 }
 
 type source struct {

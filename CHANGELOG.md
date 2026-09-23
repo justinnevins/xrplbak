@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Warning: `verify` and `restore` with `--backup-id` warn when the named backup is from an older epoch than the newest one that authenticates, and warn again when it landed on the ledger after the first backup of the newer epoch. `init --rotate` keeps the writer account, so whoever kept the old key file can still post old-epoch backups that the recovery words authenticate. Exit codes are unchanged.
 - Batch (XLS-56, amendment BatchV1_1): `backup --submit` wraps the chunks, the manifest parts and the DID anchor in one all-or-nothing Batch transaction when the server has the amendment enabled, so the ledger never holds an anchor without its manifest. Larger backups send the chunks in a Batch first, then the manifest and the anchor together. New `--batch=auto|on|off` (default auto). Verify and restore are unchanged: inner transactions keep their own hashes in `account_tx`, `tx` and the dump. The codec is pinned to a Batch that validated on Devnet.
 - Fix: the redaction plan printed by `backup` and `redact` names the lines before the first stanza instead of `[]`, and says when a move was only comments, the same wording the restore todo already used.
 - AEAD tag test: every single-byte change to a chunk, manifest part, or bundle frame is refused by the crypto layer, pinned in `internal/crypto` (the corpus rows prove refusal at the command level but the manifest field check masks the tag check there).
