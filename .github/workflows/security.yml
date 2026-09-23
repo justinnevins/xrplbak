@@ -28,6 +28,14 @@ jobs:
       - run: |
           set -o pipefail
           go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -show verbose ./... 2>&1 | tee govulncheck.txt
+      # Source mode above runs on the scanner's own toolchain. The release
+      # binary is built with the go.mod toolchain, so scan that binary too:
+      # binary mode checks the standard library version it was built with.
+      - run: |
+          set -o pipefail
+          make build
+          go version bin/xrplbak-linux-amd64 | tee -a govulncheck.txt
+          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -mode binary -show verbose bin/xrplbak-linux-amd64 2>&1 | tee -a govulncheck.txt
       - name: Report
         if: always()
         run: |
