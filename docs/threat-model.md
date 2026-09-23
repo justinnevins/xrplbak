@@ -14,11 +14,12 @@
 
 | Adversary | What they get | What stops them |
 |---|---|---|
-| Anyone reading the ledger forever | Ciphertext, chunk count, timing, the writer account | AES-256-GCM under per-backup keys. No public-key crypto, so no harvest-now-decrypt-later. |
+| Anyone reading the ledger forever | Ciphertext, chunk count, timing, the writer account | AES-256-GCM under per-backup keys. No public-key encryption, so no harvest-now-decrypt-later. |
 | Holder of the operator's hot wallet | Nothing. The writer account is separate. | |
 | Thief of the writer key or the host key file | Can post junk, move or delete the anchor, decrypt that epoch's backups, spend the small balance | Junk fails authentication and cannot shadow real parts (every ciphertext per index is tried). A moved anchor triggers a rollback warning. Rotate the epoch with `init --rotate`. |
 | Lying or partial history server | Can withhold | Every error names the searched range. Verify against a second source or the dump. |
 | Disk seizure of the validator | That host's config, that epoch's backups | Same data the host already had. Nothing from other epochs. |
+| Future quantum computer | Forged writer account signatures (post junk, move or delete the anchor, spend the balance) and forged public attestations, both ed25519 | Backup secrecy and authenticity are symmetric only (AES-256-GCM, HMAC-SHA256, 256-bit root key), about 128-bit security against Grover. Move the writer account to a post-quantum key when the XRP Ledger offers one. |
 | Malicious release binary | Everything | Reproducible build, SHA256SUMS in CI, README trust policy, no update channel. |
 | Operator at 3am | Wrong account, wrong words, overwrite | BIP39 and share checksums, dry runs by default, refusal to overwrite without --force. |
 

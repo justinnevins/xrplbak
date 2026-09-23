@@ -15,6 +15,8 @@ Everything is from the Go standard library. No novel constructions.
 
 Why no X25519 or RSA: any public-key ciphertext on a permanent public ledger is a harvest-now-decrypt-later target. Symmetric only means a quantum computer halves the security level to 128 bits and nothing more.
 
+Where public-key crypto remains: signatures only. The writer account signs its transactions with ed25519, and a public attestation is an ed25519 signature by the validator master key. A quantum computer that breaks ed25519 could forge both, but neither protects the secrecy or the authenticity of a backup. Go 1.27 ships ML-DSA (FIPS 204) in `crypto/mldsa`, so a post-quantum attestation needs no new dependency once XRPL validator keys support one. See the README section on quantum computers.
+
 Why the host holds a key at all: the host already has the plaintext config. An epoch key that decrypts this host's own backups adds no exposure. It never derives the root key or other epochs.
 
 Test vectors: `internal/crypto/crypto_test.go` pins the epoch-0 derivation of a fixed root key; `internal/xrpl/codec/codec_test.go` pins DIDSet and DIDDelete serialization to xrpl.js fixtures; `internal/xrpl/sign/keys_test.go` pins ed25519 seed, address, and signature.
