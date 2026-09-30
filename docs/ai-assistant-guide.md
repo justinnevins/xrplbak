@@ -89,8 +89,8 @@ Or download a release binary and check it: `sha256sum -c SHA256SUMS`. If the
 hash does not match, stop.
 
 If a binary is already on the machine and you did not build or check it,
-run `xrplbak version` and report what it says. `v1.0.0` exactly is a
-release. A suffix such as `v1.0.0-44-g4392e28` means a build 44 commits past
+run `xrplbak version` and report what it says. `v1.1.0` exactly is a
+release. A suffix such as `v1.1.0-3-g4392e28` means a build 3 commits past
 that tag, at commit 4392e28. Tell the operator you could not verify where it
 came from.
 

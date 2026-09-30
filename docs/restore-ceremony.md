@@ -12,7 +12,7 @@ Print this. Keep it with the recovery words.
 
 ## Steps
 
-1. Build: `git clone https://github.com/justinnevins/xrplbak && cd xrplbak && git checkout v1.0.0 && make build`.
+1. Build: `git clone https://github.com/justinnevins/xrplbak && cd xrplbak && git checkout v1.1.0 && make build`.
 2. Dry run: `bin/xrplbak-linux-amd64 restore --rpc mainnet --bundle /path/to/<id>.bundle`. Enter the words when asked. Without a key file the tool asks for the account address too.
 3. Read the Discovery block. The starred line is the backup that will be restored. A WARNING about rollback means someone moved the anchor; the tool already picked the newest authenticated backup.
 4. Read the Files block. `complete` means the bytes match the original. `PARTIAL` means content is missing from the file (the bundle was missing or only partly present); the "Before starting the server" list says what to re-enter.

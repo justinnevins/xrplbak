@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.1.0 (2026-09-30)
 
 - Fix: `backup` refuses a file named more than once, for example an `--include` equal to `--config` or `--validators`, with exit 1. Such a backup exited 0, and `restore` then wrote that file with its content doubled while reporting PARTIAL. `restore` also refuses (exit 3) a manifest that lists one path twice, so backups made before this fix cannot write a doubled file.
 - Fix: the PEM header check ignores letter case, in the config and in `--include` files, and so does the `secret_key` check on `--include` files. A lowercase header was not refused.
