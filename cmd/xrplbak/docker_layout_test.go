@@ -69,7 +69,7 @@ func TestDockerContainerOnlyValidatorsPath(t *testing.T) {
 	// byte for byte, the container path line included.
 	o := backup.Options{ConfigPath: cfgPath, ValidatorsPath: valPath, Key: w.key, Seq: 2}
 	out := t.TempDir()
-	if err := doSubmit(o, w.ledger, "fake", w.writer, out, 0, false, true, "auto", "", "", nil, nil, ""); err != nil {
+	if err := doSubmit(o, w.ledger, "fake", w.writer, out, 0, false, true, "auto", "", "", nil, nil, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	bundles, _ := filepath.Glob(filepath.Join(out, "*.bundle"))

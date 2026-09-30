@@ -41,7 +41,7 @@ func TestDelegatedAttestationEndToEnd(t *testing.T) {
 		before, _, _ := w.ledger.AccountTx(account)
 		seq++
 		o := backup.Options{ConfigPath: w.cfgPath, ValidatorsPath: w.valPath, Key: w.key, Seq: seq}
-		err := doSubmit(o, w.ledger, "fake", w.writer, t.TempDir(), 0, false, true, "auto", "", "", nil, k, sig)
+		err := doSubmit(o, w.ledger, "fake", w.writer, t.TempDir(), 0, false, true, "auto", "", "", nil, k, sig, "", "")
 		after, _, _ := w.ledger.AccountTx(account)
 		if err != nil {
 			seq--

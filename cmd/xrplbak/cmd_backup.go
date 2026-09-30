@@ -101,14 +101,14 @@ func cmdBackup(args []string) error {
 	deleteAnchor := fs.Bool("delete-anchor", false, "with --tombstone: also delete the DID entry (frees 0.2 XRP)")
 	forceSeq := fs.Bool("force-seq", false, "submit even when existing backups could not be read (risks a duplicate seq)")
 	vpk := fs.String("validator-key", "", "validator public key (nHB...) to bind, stored only as a hash inside the ciphertext")
-	attest := fs.String("attestation", "", "hex signature over the attest string, made offline with validator-keys sign")
-	attestVPK := fs.String("attestation-key", "", "validator public key (nHB...) that made the attestation")
+	attest := fs.String("attestation", "", "team setups only: hex signature over the private attest string, kept inside the encrypted manifest. Most operators want --attest")
+	attestVPK := fs.String("attestation-key", "", "team setups only: validator public key (nHB...) for --attestation. On a dry run alone, prints the string to sign")
 	comments := fs.String("comments", "bundle", commentsFlagHelp)
 	peers := fs.String("peers", "bundle", peersFlagHelp)
 	batch := fs.String("batch", "auto", batchFlagHelp)
-	attestPubKey := fs.String("attest-public-key", "", "validator public key (nHB..., ed25519) for a public on-chain attestation that this validator backs up")
+	attestPubKey := fs.String("attest-public-key", "", "advanced: sign each public attestation with the validator master key itself (nHB..., ed25519). Most operators want --attest, which keeps the master key offline")
 	attestPubSig := fs.String("attest-public-sig", "", "hex signature over the public attest string, made offline with validator-keys sign")
-	attestDelegated := fs.Bool("attest", false, "publish a public attestation signed by the delegated attestation key (see xrplbak attest-key); the master key stays offline")
+	attestDelegated := fs.Bool("attest", false, "publish a public attestation that this validator backs up, signed by the delegated attestation key (see xrplbak attest-key); the master key stays offline")
 	attestKeyPath := fs.String("attest-key", "", "attestation key file (default: "+attestKeyName+" beside xrplbak.key)")
 	delegSig := fs.String("attest-delegation-sig", "", "with --attest: the master key's hex signature over the delegation string, to publish the delegation with this backup")
 	if err := fs.Parse(args); err != nil {
@@ -193,8 +193,8 @@ func cmdBackup(args []string) error {
 		sum := sha256.Sum256(pub)
 		o.VPKSHA256 = hex.EncodeToString(sum[:])
 	}
-	if (*attest == "") != (*attestVPK == "") {
-		return fail(exitUsage, "--attestation and --attestation-key go together")
+	if *attest != "" && *attestVPK == "" || *attestVPK != "" && *attest == "" && *submit {
+		return fail(exitUsage, "--attestation and --attestation-key go together; run a dry run with --attestation-key alone to print the string to sign")
 	}
 	if *attest != "" {
 		if _, err := sign.DecodeNodePublic(*attestVPK); err != nil {
@@ -218,7 +218,7 @@ func cmdBackup(args []string) error {
 			if seqErr != nil && !*forceSeq {
 				return fail(exitNetwork, "could not read existing backups (%v). Fix the server or pass --force-seq to submit as seq 1 anyway", seqErr)
 			}
-			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, *batch, *attestPubKey, *attestPubSig, warns, att, *delegSig)
+			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, *batch, *attestPubKey, *attestPubSig, warns, att, *delegSig, *rpcURL, keyPath)
 		}
 	}
 	if att != nil {
@@ -228,10 +228,10 @@ func cmdBackup(args []string) error {
 			fmt.Fprintln(stdout, "  The delegation must already be on the ledger, or pass --attest-delegation-sig to publish it with this backup.")
 		}
 	}
-	return doDryRun(o, warns, *out)
+	return doDryRun(o, warns, *out, *attestVPK != "")
 }
 
-func planReport(p *backup.Plan, o backup.Options) {
+func planReport(p *backup.Plan, o backup.Options, showTeam bool) {
 	m := p.Manifest
 	hr("Plan")
 	fmt.Fprintf(stdout, "  backup id:   %s\n", m.BackupID)
@@ -258,9 +258,11 @@ func planReport(p *backup.Plan, o backup.Options) {
 	}
 	hr("Off-chain bundle")
 	fmt.Fprintf(stdout, "  %d bytes encrypted. Keep it in two places. Its hash is in the manifest.\n", len(p.Bundle))
-	hr("Attestation (optional, team setups)")
-	fmt.Fprintln(stdout, "  sign this exact string offline with validator-keys sign, then pass --attestation:")
-	fmt.Fprintln(stdout, "  "+p.AttestText)
+	if showTeam {
+		hr("Team attestation (inside the encrypted manifest)")
+		fmt.Fprintln(stdout, "  sign this exact string offline with validator-keys sign, then pass --attestation:")
+		fmt.Fprintln(stdout, "  "+p.AttestText)
+	}
 	if p.AttestPublicText != "" {
 		hr("Public attestation (optional, on-chain, cleartext)")
 		fmt.Fprintln(stdout, "  This publishes, in the clear and permanently, that your validator")
@@ -272,12 +274,12 @@ func planReport(p *backup.Plan, o backup.Options) {
 	}
 }
 
-func doDryRun(o backup.Options, warns []string, out string) error {
+func doDryRun(o backup.Options, warns []string, out string, showTeam bool) error {
 	p, err := backup.Build(o)
 	if err != nil {
 		return err
 	}
-	planReport(p, o)
+	planReport(p, o, showTeam)
 	for _, w := range warns {
 		fmt.Fprintln(stdout, "  NOTE:", w)
 	}
@@ -304,12 +306,12 @@ func writeBundle(p *backup.Plan, out string) error {
 	return nil
 }
 
-func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor, yes bool, batch, attestPubKey, attestPubSig string, warns []string, att *attestKey, delegSig string) error {
+func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor, yes bool, batch, attestPubKey, attestPubSig string, warns []string, att *attestKey, delegSig, rpcArg, keyPath string) error {
 	p, err := backup.Build(o)
 	if err != nil {
 		return err
 	}
-	planReport(p, o)
+	planReport(p, o, false)
 	var attestMemo, delegMemo *codec.Memo
 	if att != nil {
 		dm, am, err := delegatedMemos(client, writer.Address(), att, delegSig, p)
@@ -375,8 +377,36 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 	hr("Done")
 	fmt.Fprintf(stdout, "  dump written:   %s (offline restore source; contains ciphertext only)\n", dumpPath)
 	fmt.Fprintln(stdout, "  keep safe:      the bundle file, the dump file, your recovery words or shares, and the account address")
-	fmt.Fprintln(stdout, "  verify anytime: xrplbak verify --rpc", strings.Fields(source)[0])
+	if delegMemo != nil {
+		fmt.Fprintf(stdout, "  delegation:     published for attestation key %d\n", att.DSeq)
+	}
+	switch {
+	case attestMemo != nil && att != nil:
+		fmt.Fprintf(stdout, "  attestation:    published, signed by delegated attestation key %d. Check it: xrplbak attest-verify --rpc %s --account %s\n", att.DSeq, verifyRPC(rpcArg, source), writer.Address())
+	case attestMemo != nil:
+		fmt.Fprintf(stdout, "  attestation:    published, signed by the validator master key. Check it: xrplbak attest-verify --rpc %s --account %s\n", verifyRPC(rpcArg, source), writer.Address())
+	}
+	if o.Attestation != nil {
+		fmt.Fprintln(stdout, "  team attestation: included in the encrypted manifest")
+	}
+	tip := "xrplbak verify --rpc " + verifyRPC(rpcArg, source)
+	if keyPath != "" {
+		tip += " --key " + keyPath
+	}
+	if !p.Manifest.Tombstone {
+		tip += " --bundle " + filepath.Join(out, p.Manifest.BackupID+".bundle")
+	}
+	fmt.Fprintln(stdout, "  verify anytime: "+tip)
 	return nil
+}
+
+// verifyRPC is the --rpc value to print in a hint: the operator's own
+// word (mainnet, testnet) when they gave one, else the server URL.
+func verifyRPC(rpcArg, source string) string {
+	if rpcArg != "" {
+		return rpcArg
+	}
+	return strings.Fields(source)[0]
 }
 
 // batchFlagHelp: the atomic path is the default wherever the ledger offers

@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.1 (2026-09-30)
+
+- `backup` no longer prints the team attestation string in every plan. It appears on a dry run with `--attestation-key`, the flag it belongs to. `--attestation` and `--attestation-key` still go together on `--submit`.
+- `backup --submit` says what it published: the delegation, and the public attestation with the key that signed it and the `attest-verify` command to check it.
+- The closing `verify anytime` hint is a command that works as printed: the `--rpc` value as given (`testnet`, not the resolved URL), the key file, and the bundle. Without `--key`, verify asked for the recovery words.
+- Help text says which attestation flags most operators want (`--attest`) and marks the others as team or advanced options.
+- Docs: the build steps and the AI assistant guide name v1.1.1.
+
 ## v1.1.0 (2026-09-30)
 
 - Fix: `backup` refuses a file named more than once, for example an `--include` equal to `--config` or `--validators`, with exit 1. Such a backup exited 0, and `restore` then wrote that file with its content doubled while reporting PARTIAL. `restore` also refuses (exit 3) a manifest that lists one path twice, so backups made before this fix cannot write a doubled file.
