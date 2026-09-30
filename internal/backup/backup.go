@@ -139,6 +139,17 @@ func Build(o Options) (*Plan, error) {
 		}
 	}
 
+	// One file, one manifest entry. An --include equal to --config once put
+	// the whole file in the bundle beside its on-chain split, and restore
+	// merged the two into a file with its content doubled.
+	seen := map[string]bool{}
+	for _, f := range files {
+		if seen[f.Path] {
+			return nil, fmt.Errorf("%s is named more than once (by --config, --validators or --include); name each file once", f.Path)
+		}
+		seen[f.Path] = true
+	}
+
 	onRaw, err := container.Encode(onEntries)
 	if err != nil {
 		return nil, err
@@ -249,7 +260,7 @@ func refuseSecrets(path string, raw []byte) error {
 	if base == "validator-keys.json" || base == "wallet.db" || strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") {
 		return fmt.Errorf("%s: refused. xrplbak never handles validator master keys, wallet.db, or private key files", path)
 	}
-	if strings.Contains(string(raw), "secret_key") || strings.Contains(string(raw), "-----BEGIN") {
+	if low := strings.ToLower(string(raw)); strings.Contains(low, "secret_key") || strings.Contains(low, "-----begin") {
 		return fmt.Errorf("%s: refused. File contains key material (secret_key or PEM)", path)
 	}
 	return nil

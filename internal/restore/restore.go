@@ -45,6 +45,9 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, erro
 		if err := checkPath(mf.Path); err != nil {
 			return nil, err
 		}
+		if listed[mf.Path] {
+			return nil, fmt.Errorf("refused: the manifest lists %q more than once; restoring it could write merged content that matches no file", mf.Path)
+		}
 		listed[mf.Path] = true
 	}
 	for _, e := range append(append([]container.Entry{}, onchain...), bundle...) {

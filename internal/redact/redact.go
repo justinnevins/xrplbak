@@ -269,7 +269,7 @@ func refuse(f *cfg.File) error {
 		if !blobStanzas[l.Stanza] && (reSeed.MatchString(text) || reRFC1751.MatchString(text)) {
 			return &RefusedError{Stanza: l.Stanza, LineNo: l.No, Reason: "line looks like a seed or secret key"}
 		}
-		if strings.Contains(text, "-----BEGIN") {
+		if strings.Contains(strings.ToLower(text), "-----begin") {
 			return &RefusedError{Stanza: l.Stanza, LineNo: l.No, Reason: "PEM key material"}
 		}
 		if strings.Contains(text, cfg.MarkerPrefix) {

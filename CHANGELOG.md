@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix: `backup` refuses a file named more than once, for example an `--include` equal to `--config` or `--validators`, with exit 1. Such a backup exited 0, and `restore` then wrote that file with its content doubled while reporting PARTIAL. `restore` also refuses (exit 3) a manifest that lists one path twice, so backups made before this fix cannot write a doubled file.
+- Fix: the PEM header check ignores letter case, in the config and in `--include` files, and so does the `secret_key` check on `--include` files. A lowercase header was not refused.
 - Public attestation by delegated key. `attest-key` creates an ed25519 attestation key and prints one string for the validator master key to sign offline. `backup --attest --attest-delegation-sig` publishes the delegation, and `backup --attest` attests later backups without the master key. A higher `--dseq` retires a stolen key. `attest-verify` checks the whole chain and accepts `--dump`. Master-key attestations (`--attest-public-key`) still work. Formats: docs/wire-format.md.
 - Redaction: an `admin` or `secure_gateway` line that lists only loopback addresses (127.0.0.0/8, ::1) stays on-chain. Any other address still moves the line to the bundle.
 - New `--peers=bundle|onchain` on `redact` and `backup`. `onchain` puts the public lines of `[ips_fixed]` on the ledger after the operator types `PUBLISH PEERS`. Private addresses and internal names still go to the bundle.
