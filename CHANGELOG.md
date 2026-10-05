@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Fix: `verify` and `restore` with the recovery words found no backup more than 8 epochs above the start of the search when the DID anchor was gone. A newer backup or tombstone at, say, epoch 12 was skipped, and the epoch 0 backup was restored with exit 0. The search now reaches 64 epochs above the newest epoch it finds, and moves up again with each epoch found.
+- Warning: `verify`, `restore` and `backup` warn when a manifest that this key cannot open landed after the selected backup. It may be a newer backup from another epoch, or junk from someone holding the writer key. Manifests that landed before it, such as older epochs after a rotation, do not warn. Exit codes are unchanged.
+- Fix: `restore --allow-tombstoned` with `--backup-id` naming a tombstone restored the newest backup, even one newer than that tombstone. It now restores the newest backup older than the tombstone it chose, says which one, and gives the same stale-epoch warnings as `--backup-id`.
+
 ## v1.1.1 (2026-09-30)
 
 - `backup` no longer prints the team attestation string in every plan. It appears on a dry run with `--attestation-key`, the flag it belongs to. `--attestation` and `--attestation-key` still go together on `--submit`.

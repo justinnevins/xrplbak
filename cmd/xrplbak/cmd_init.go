@@ -165,7 +165,7 @@ func doRotate(keyPath, wordsFile, sharesFile string, passphrase bool) error {
 	fmt.Fprintf(stdout, "  key file:  %s is now epoch %d\n", keyPath, next.Epoch)
 	fmt.Fprintf(stdout, "  old key:   moved to %s; delete it once the new epoch has a backup\n", old)
 	fmt.Fprintln(stdout, "  next:      xrplbak backup --submit --rpc mainnet   (first backup of the new epoch is seq 1)")
-	fmt.Fprintln(stdout, "  note:      restores with the recovery words find every epoch; the key file finds only its own")
+	fmt.Fprintln(stdout, "  note:      restores with the recovery words open every epoch; the key file opens only its own")
 	return nil
 }
 

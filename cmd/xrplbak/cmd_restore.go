@@ -277,16 +277,27 @@ func cmdRestore(args []string) error {
 		if !*allowTomb {
 			return fail(exitIncomplete, "the newest backup is a tombstone: the operator retired these backups. Pass --allow-tombstoned to restore the newest real backup anyway")
 		}
+		// Take the newest real backup older than the tombstone that was
+		// chosen, whether that is the newest one or one named by
+		// --backup-id. Candidates are sorted newest first.
+		tomb := cand
 		cand = nil
+		past := false
 		for _, c := range res.Candidates {
-			if !c.Manifest.Tombstone {
+			if c == tomb {
+				past = true
+				continue
+			}
+			if past && !c.Manifest.Tombstone {
 				cand = c
 				break
 			}
 		}
 		if cand == nil {
-			return fail(exitIncomplete, "only tombstones were found")
+			return fail(exitIncomplete, "no backup older than tombstone %s was found", tomb.Manifest.BackupID[:16])
 		}
+		fmt.Fprintf(stdout, "  using backup %s (epoch %d seq %d), the newest one older than tombstone %s\n", cand.Manifest.BackupID[:16], cand.Epoch, cand.Manifest.Seq, tomb.Manifest.BackupID[:16])
+		warnStaleEpoch(res, cand)
 	}
 	entries, err := discover.Fetch(s.client, s.keys, res, cand)
 	if err != nil {

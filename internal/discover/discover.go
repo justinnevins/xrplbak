@@ -69,19 +69,26 @@ type Result struct {
 	Latest     *Candidate
 	Warnings   []string
 	Rejected   int // manifests that failed authentication
+	// RejectedAfter counts rejected manifests that landed after Latest.
+	// One of them may be a newer backup this key cannot open.
+	RejectedAfter int
 	// Conflict is set, and Latest left nil, when two different backups
 	// authenticate at the newest (epoch, seq). The tool never picks one.
 	Conflict string
 }
 
-// maxEpochProbe bounds how many epochs the scan tries per manifest when
-// the epoch is not known from an anchor.
+// maxEpochProbe bounds how many epochs the scan tries below the starting
+// epoch, and how far above the newest epoch found it keeps looking. Epochs
+// only advance one at a time (init --rotate), so the upward search follows
+// a chain of rotations as long as no 64 rotations in a row went without a
+// backup. Anything still unopened is reported, never dropped in silence.
 const maxEpochProbe = 64
 
 // Run performs discovery. epochHint is where to start probing (the key
 // file epoch, or 0).
 func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, error) {
 	res := &Result{Account: account}
+	keys = &cachedKeys{k: keys, m: map[uint32]cachedKey{}}
 
 	// 1. Anchor.
 	if data, err := c.LedgerEntryDID(account); err == nil {
@@ -138,21 +145,60 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 			ps.parts[p.Index] = append(ps.parts[p.Index], memoPart{ct: p.Ciphertext, tx: t.Hash, ledger: t.LedgerIndex})
 		}
 	}
+	var pending []setKey
 	for _, k := range order {
 		ps := sets[k]
 		if int(ps.total) != len(ps.parts) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("manifest %s: only %d of %d parts in searched range", hex.EncodeToString(k.id[:8]), len(ps.parts), ps.total))
 			continue
 		}
-		cand, ok := openManifest(keys, k.id, k.nonce[:], ps, epochHint)
+		cand, ok := openManifest(keys, k.id, k.nonce[:], ps, probeOrder(epochHint))
 		if !ok {
-			res.Rejected++
-			if res.AnchorOK && res.Anchor.BackupID == k.id {
-				res.Warnings = append(res.Warnings, fmt.Sprintf("a manifest for the anchored backup %s failed authentication; someone with the writer key may be posting junk", hex.EncodeToString(k.id[:8])))
-			}
+			pending = append(pending, k)
 			continue
 		}
 		res.Candidates = append(res.Candidates, cand)
+	}
+	// A manifest from a later epoch than the search reached stays closed
+	// above. Each epoch found moves the search up, so keep going until a
+	// pass finds nothing new.
+	upper := int64(epochHint) + maxEpochProbe
+	for len(pending) > 0 {
+		top := int64(epochHint)
+		for _, c := range res.Candidates {
+			if int64(c.Epoch) > top {
+				top = int64(c.Epoch)
+			}
+		}
+		next := top + maxEpochProbe
+		if next > 0xFFFFFFFF {
+			next = 0xFFFFFFFF
+		}
+		if next <= upper {
+			break
+		}
+		var more []uint32
+		for e := upper + 1; e <= next; e++ {
+			more = append(more, uint32(e))
+		}
+		upper = next
+		var still []setKey
+		for _, k := range pending {
+			if cand, ok := openManifest(keys, k.id, k.nonce[:], sets[k], more); ok {
+				res.Candidates = append(res.Candidates, cand)
+			} else {
+				still = append(still, k)
+			}
+		}
+		pending = still
+	}
+	var rejectedLedgers []uint32
+	for _, k := range pending {
+		res.Rejected++
+		rejectedLedgers = append(rejectedLedgers, sets[k].lastLedger())
+		if res.AnchorOK && res.Anchor.BackupID == k.id {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("a manifest for the anchored backup %s failed authentication; someone with the writer key may be posting junk", hex.EncodeToString(k.id[:8])))
+		}
 	}
 	sort.SliceStable(res.Candidates, func(i, j int) bool {
 		a, b := res.Candidates[i], res.Candidates[j]
@@ -214,6 +260,19 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 	if res.Rejected > 0 && res.Latest == nil {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("%d manifest(s) present but none authenticate: wrong recovery key, wrong epoch, or junk from a writer-key thief", res.Rejected))
 	}
+	// A rejected manifest that landed before the selected backup is
+	// expected after a rotation: the key file cannot read old epochs. One
+	// that landed after it may be the newest backup, so say so.
+	if res.Latest != nil {
+		for _, l := range rejectedLedgers {
+			if l == 0 || res.Latest.Ledger == 0 || l > res.Latest.Ledger {
+				res.RejectedAfter++
+			}
+		}
+	}
+	if res.RejectedAfter > 0 {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("%d manifest(s) landed after the selected backup (epoch %d seq %d) but do not open with this key. One may be a newer backup from another epoch, or junk from someone holding the writer key. The selected backup may not be the newest. Check with the recovery words, or with the newest key file", res.RejectedAfter, res.Latest.Manifest.Epoch, res.Latest.Manifest.Seq))
+	}
 	return res, nil
 }
 
@@ -232,10 +291,45 @@ type partSet struct {
 	parts map[uint16][]memoPart
 }
 
-// openManifest tries each epoch, and for each index every ciphertext seen,
-// until a full manifest authenticates.
-func openManifest(keys Keys, id [16]byte, nonce []byte, ps *partSet, hint uint32) (*Candidate, bool) {
-	for _, e := range probeOrder(hint) {
+// lastLedger is the newest ledger any part of the set landed in, or 0 when
+// the source gives no ledger index.
+func (ps *partSet) lastLedger() uint32 {
+	var l uint32
+	for _, mp := range ps.parts {
+		for _, p := range mp {
+			if p.ledger > l {
+				l = p.ledger
+			}
+		}
+	}
+	return l
+}
+
+// cachedKeys derives each epoch key once per run. The upward search can try
+// many epochs for every manifest that does not open.
+type cachedKeys struct {
+	k Keys
+	m map[uint32]cachedKey
+}
+
+type cachedKey struct {
+	key crypto.EpochKey
+	ok  bool
+}
+
+func (c *cachedKeys) Epoch(e uint32) (crypto.EpochKey, bool) {
+	if v, hit := c.m[e]; hit {
+		return v.key, v.ok
+	}
+	k, ok := c.k.Epoch(e)
+	c.m[e] = cachedKey{k, ok}
+	return k, ok
+}
+
+// openManifest tries each epoch in order, and for each index every
+// ciphertext seen, until a full manifest authenticates.
+func openManifest(keys Keys, id [16]byte, nonce []byte, ps *partSet, epochs []uint32) (*Candidate, bool) {
+	for _, e := range epochs {
 		k, ok := keys.Epoch(e)
 		if !ok {
 			continue
@@ -272,13 +366,13 @@ func openManifest(keys Keys, id [16]byte, nonce []byte, ps *partSet, hint uint32
 	return nil, false
 }
 
-// probeOrder tries the hint, then earlier epochs, then a few later ones.
+// probeOrder tries the hint, then earlier epochs, then later ones.
 func probeOrder(hint uint32) []uint32 {
 	var out []uint32
 	for e := int64(hint); e >= 0 && len(out) < maxEpochProbe; e-- {
 		out = append(out, uint32(e))
 	}
-	for e := int64(hint) + 1; e <= int64(hint)+8 && e <= 0xFFFFFFFF; e++ {
+	for e := int64(hint) + 1; e <= int64(hint)+maxEpochProbe && e <= 0xFFFFFFFF; e++ {
 		out = append(out, uint32(e))
 	}
 	return out
