@@ -86,3 +86,35 @@ func TestNextSeqRefusesAtMaxSeq(t *testing.T) {
 		t.Fatalf("bindPlan must return ErrLastSeq with the rotate message, got err %v, warns %q", err, warns)
 	}
 }
+
+// Rotate moves the old key file aside as xrplbak.key.epochN. If a file
+// with that name was already there (a hand-saved copy, or a second rotate
+// from a restored key file), it was replaced without a word. Rotate must
+// never overwrite a file: it picks a free name and says which.
+func TestRotateDoesNotOverwriteOldCopy(t *testing.T) {
+	w := newWorld(t, 85)
+	d := t.TempDir()
+	path := filepath.Join(d, "xrplbak.key")
+	oldKey := w.keyAt(0).Encode()
+	must(t, os.WriteFile(path, oldKey, 0o600))
+	saved := path + ".epoch0"
+	must(t, os.WriteFile(saved, []byte("operator's own copy"), 0o600))
+	r := w.run("", "init", "--rotate", "--out", d, "--words-file", w.words)
+	if r.code != exitOK {
+		t.Fatalf("rotate must still succeed, got exit %d:\n%s", r.code, r.out)
+	}
+	if got, _ := os.ReadFile(saved); string(got) != "operator's own copy" {
+		t.Fatalf("%s was overwritten", saved)
+	}
+	moved := path + ".epoch0.2"
+	if got, err := os.ReadFile(moved); err != nil || string(got) != string(oldKey) {
+		t.Fatalf("the old key file must move to %s (err %v)", moved, err)
+	}
+	if !strings.Contains(r.out, "moved to "+moved) {
+		t.Fatalf("rotate must name where the old key went:\n%s", r.out)
+	}
+	nb, _ := os.ReadFile(path)
+	if kf, err := crypto.DecodeKeyFile(nb, nil); err != nil || kf.Epoch != 1 {
+		t.Fatalf("the new key file must be epoch 1: %v", err)
+	}
+}

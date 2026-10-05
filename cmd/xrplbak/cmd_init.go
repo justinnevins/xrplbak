@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"math/rand"
 	"os"
@@ -169,8 +171,8 @@ func doRotate(keyPath, wordsFile, sharesFile string, passphrase bool) error {
 	} else {
 		out = next.Encode()
 	}
-	old := keyPath + ".epoch" + strconv.FormatUint(uint64(kf.Epoch), 10)
-	if err := os.Rename(keyPath, old); err != nil {
+	old, err := moveAside(keyPath, keyPath+".epoch"+strconv.FormatUint(uint64(kf.Epoch), 10))
+	if err != nil {
 		return err
 	}
 	if err := os.WriteFile(keyPath, out, 0o600); err != nil {
@@ -185,6 +187,27 @@ func doRotate(keyPath, wordsFile, sharesFile string, passphrase bool) error {
 	fmt.Fprintln(stdout, "  next:      xrplbak backup --submit --rpc mainnet   (first backup of the new epoch is seq 1)")
 	fmt.Fprintln(stdout, "  note:      restores with the recovery words open every epoch; the key file opens only its own")
 	return nil
+}
+
+// moveAside moves path to base, or to base.2, base.3 and so on when that
+// name is taken. A hard link fails when the target exists, so no file is
+// ever replaced, unlike a rename. It returns the name used.
+func moveAside(path, base string) (string, error) {
+	for i := 1; i <= 100; i++ {
+		dst := base
+		if i > 1 {
+			dst = base + "." + strconv.Itoa(i)
+		}
+		err := os.Link(path, dst)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return dst, os.Remove(path)
+	}
+	return "", fail(exitRefused, "%s and 99 numbered copies already exist; move some aside and rotate again", base)
 }
 
 // checkReentry asks for three random words (or one full share) so a

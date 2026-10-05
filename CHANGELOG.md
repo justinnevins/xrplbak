@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fix: `init --rotate` moved the old key file to `xrplbak.key.epochN` even when a file with that name existed, and replaced it. It now picks a free name (`.epochN.2`, `.epochN.3`, ...) and prints it. No file is ever overwritten.
+
 ## v1.1.2 (2026-10-05)
 
 - Fix: `init --rotate` on a passphrase-protected key file wrote the new key file without a passphrase unless `--key-passphrase` was given again. The new file now keeps the passphrase that was just entered. `--key-passphrase` still chooses a new one.
