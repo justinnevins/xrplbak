@@ -458,6 +458,9 @@ func reportRun(res *discover.Result, source string) {
 // returned so --submit can refuse to guess a sequence number.
 func bindPlan(o *backup.Options, c xrpl.Client, kf *crypto.KeyFile, account string) ([]string, error) {
 	seq, sup, warns, err := backup.NextSeq(c, kf, account)
+	if errors.Is(err, backup.ErrLastSeq) {
+		return []string{err.Error()}, err
+	}
 	if err != nil {
 		return []string{"could not read existing backups (" + err.Error() + "); this plan assumes seq 1"}, err
 	}

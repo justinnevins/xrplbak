@@ -98,7 +98,7 @@ func cmdBackup(args []string) error {
 	yes := fs.Bool("yes", false, "answer the submit confirmation with yes, for scripts")
 	maxFee := fs.Uint64("max-fee", 5000, "abort if the network fee per transaction exceeds this many drops")
 	tombstone := fs.Bool("tombstone", false, "publish a tombstone that marks earlier backups as retired")
-	deleteAnchor := fs.Bool("delete-anchor", false, "with --tombstone: also delete the DID entry (frees 0.2 XRP)")
+	deleteAnchor := fs.Bool("delete-anchor", false, "with --tombstone only: also delete the DID entry (frees 0.2 XRP)")
 	forceSeq := fs.Bool("force-seq", false, "submit even when existing backups could not be read (risks a duplicate seq)")
 	vpk := fs.String("validator-key", "", "validator public key (nHB...) to bind, stored only as a hash inside the ciphertext")
 	attest := fs.String("attestation", "", "team setups only: hex signature over the private attest string, kept inside the encrypted manifest. Most operators want --attest")
@@ -127,6 +127,15 @@ func cmdBackup(args []string) error {
 	case "auto", "on", "off":
 	default:
 		return fail(exitUsage, "--batch must be auto, on or off, not %q", *batch)
+	}
+	if *deleteAnchor && !*tombstone {
+		return fail(exitUsage, "--delete-anchor needs --tombstone")
+	}
+	if *tombstone && len(includes) > 0 {
+		return fail(exitUsage, "--tombstone stores no files; drop --include")
+	}
+	if *tombstone && (*attestDelegated || *attestPubKey != "" || *attestPubSig != "" || *attest != "" || *attestVPK != "" || *delegSig != "") {
+		return fail(exitUsage, "a tombstone carries no attestation; drop --attest, --attest-public-key and --attestation")
 	}
 	if *delegSig != "" && !*attestDelegated {
 		return fail(exitUsage, "--attest-delegation-sig needs --attest")
@@ -215,6 +224,11 @@ func cmdBackup(args []string) error {
 		var seqErr error
 		warns, seqErr = bindPlan(&o, client, kf, writer.Address())
 		if *submit {
+			if errors.Is(seqErr, backup.ErrLastSeq) {
+				// --force-seq would submit seq 1 in the same epoch, which
+				// sorts below every backup already there.
+				return fail(exitRefused, "%v", seqErr)
+			}
 			if seqErr != nil && !*forceSeq {
 				return fail(exitNetwork, "could not read existing backups (%v). Fix the server or pass --force-seq to submit as seq 1 anyway", seqErr)
 			}
@@ -307,6 +321,12 @@ func writeBundle(p *backup.Plan, out string) error {
 }
 
 func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor, yes bool, batch, attestPubKey, attestPubSig string, warns []string, att *attestKey, delegSig, rpcArg, keyPath string) error {
+	if o.Tombstone && (attestPubKey != "" || attestPubSig != "" || att != nil || o.Attestation != nil || o.AttestPublicVPK != "") {
+		return fail(exitUsage, "a tombstone carries no attestation; drop --attest, --attest-public-key and --attestation")
+	}
+	if deleteAnchor && !o.Tombstone {
+		return fail(exitUsage, "--delete-anchor needs --tombstone")
+	}
 	p, err := backup.Build(o)
 	if err != nil {
 		return err

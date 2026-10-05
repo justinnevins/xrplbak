@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -139,9 +140,14 @@ func doRotate(keyPath, wordsFile, sharesFile string, passphrase bool) error {
 	if root.DeriveEpochKey(kf.Epoch) != kf.Key {
 		return fail(exitAuth, "the recovery key does not match this key file (epoch %d). Wrong words, or wrong key file", kf.Epoch)
 	}
+	if kf.Epoch == math.MaxUint32 {
+		// The next epoch would wrap to 0, a key an old key file may hold.
+		return fail(exitRefused, "the key file is at the last epoch (%d) and cannot rotate. Run init for a new writer account and recovery key", kf.Epoch)
+	}
 	next := &crypto.KeyFile{Epoch: kf.Epoch + 1, Key: root.DeriveEpochKey(kf.Epoch + 1), AccountID: kf.AccountID, WriterSeed: kf.WriterSeed}
 	crypto.Zero(root[:])
 	var out []byte
+	kept := false
 	if passphrase {
 		p := prompt("Choose a passphrase for xrplbak.key: ")
 		if p != prompt("Repeat it: ") {
@@ -151,6 +157,15 @@ func doRotate(keyPath, wordsFile, sharesFile string, passphrase bool) error {
 		if err != nil {
 			return err
 		}
+	} else if pw != nil {
+		// The key file was wrapped and the operator just typed its
+		// passphrase. The new file holds the same writer seed, so it
+		// keeps the same protection.
+		out, err = next.EncodeWrapped(pw)
+		if err != nil {
+			return err
+		}
+		kept = true
 	} else {
 		out = next.Encode()
 	}
@@ -163,6 +178,9 @@ func doRotate(keyPath, wordsFile, sharesFile string, passphrase bool) error {
 	}
 	hr("Rotated")
 	fmt.Fprintf(stdout, "  key file:  %s is now epoch %d\n", keyPath, next.Epoch)
+	if kept {
+		fmt.Fprintln(stdout, "  passphrase: the new key file uses the same passphrase. Pass --key-passphrase to choose a new one")
+	}
 	fmt.Fprintf(stdout, "  old key:   moved to %s; delete it once the new epoch has a backup\n", old)
 	fmt.Fprintln(stdout, "  next:      xrplbak backup --submit --rpc mainnet   (first backup of the new epoch is seq 1)")
 	fmt.Fprintln(stdout, "  note:      restores with the recovery words open every epoch; the key file opens only its own")

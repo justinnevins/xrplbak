@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,6 +116,9 @@ func Build(o Options) (*Plan, error) {
 		sum := sha256.Sum256(raw)
 		files = append(files, manifest.File{Path: path, Mode: mode, SHA256: hex.EncodeToString(sum[:]), Where: where})
 		return nil
+	}
+	if o.Tombstone && len(o.Includes) > 0 {
+		return nil, errors.New("a tombstone stores no files; it cannot take --include")
 	}
 	if !o.Tombstone {
 		if err := addSplit(o.ConfigPath); err != nil {
@@ -450,8 +454,13 @@ func (s *Submitter) defaults() {
 
 // DeleteAnchor sends DIDDelete. Used with --tombstone --delete-anchor.
 func (s *Submitter) DeleteAnchor() error {
-	_, _, err := s.send(&codec.Tx{Type: codec.TxDIDDelete})
-	return err
+	if _, _, err := s.send(&codec.Tx{Type: codec.TxDIDDelete}); err != nil {
+		return err
+	}
+	// The dump is the offline restore source. It must not keep an anchor
+	// the ledger no longer has.
+	s.Dump.DID = nil
+	return s.saveDump()
 }
 
 func (s *Submitter) saveDump() error {
@@ -534,6 +543,10 @@ func (s *Submitter) send(tx *codec.Tx) (hash string, ledger uint32, err error) {
 	return "", 0, fmt.Errorf("transaction did not validate after 3 attempts")
 }
 
+// ErrLastSeq: the next seq would wrap to 0 and sort below every older
+// backup. A new epoch starts again at seq 1.
+var ErrLastSeq = errors.New("the newest backup is at the last seq (4294967295) of this epoch. Run init --rotate, then back up again: the new epoch starts at seq 1")
+
 // NextSeq asks discovery for the latest backup so the new one supersedes it.
 func NextSeq(c xrpl.Client, key *crypto.KeyFile, account string) (seq uint32, supersedes string, warnings []string, err error) {
 	res, err := discover.Run(c, discover.FileKeys{E: key.Epoch, Key: key.Key}, account, key.Epoch)
@@ -548,10 +561,16 @@ func NextSeq(c xrpl.Client, key *crypto.KeyFile, account string) (seq uint32, su
 	}
 	if res.Conflict != "" {
 		// Do not add a third backup at the disputed seq. Start above it.
+		if res.Candidates[0].Manifest.Seq == math.MaxUint32 {
+			return 0, "", warns, ErrLastSeq
+		}
 		return res.Candidates[0].Manifest.Seq + 1, "", append(warns, res.Conflict), nil
 	}
 	if res.Latest == nil {
 		return 1, "", warns, nil
+	}
+	if res.Latest.Manifest.Seq == math.MaxUint32 {
+		return 0, "", warns, ErrLastSeq
 	}
 	return res.Latest.Manifest.Seq + 1, res.Latest.Manifest.BackupID, warns, nil
 }
