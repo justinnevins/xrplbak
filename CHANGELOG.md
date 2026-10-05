@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix: `verify` crashed with a Go stack trace (exit 2) when the newest backup was a tombstone and `--bundle` was not given. It now says the backup is a tombstone, does not check a bundle, and exits 5, as the exit-code table already said. `--backup-id` verifies an older backup. A short bundle hash in a manifest no longer crashes verify either.
 - Fix: `verify` and `restore` with the recovery words found no backup more than 8 epochs above the start of the search when the DID anchor was gone. A newer backup or tombstone at, say, epoch 12 was skipped, and the epoch 0 backup was restored with exit 0. The search now reaches 64 epochs above the newest epoch it finds, and moves up again with each epoch found.
 - Warning: `verify`, `restore` and `backup` warn when a manifest that this key cannot open landed after the selected backup. It may be a newer backup from another epoch, or junk from someone holding the writer key. Manifests that landed before it, such as older epochs after a rotation, do not warn. Exit codes are unchanged.
 - Fix: `restore --allow-tombstoned` with `--backup-id` naming a tombstone restored the newest backup, even one newer than that tombstone. It now restores the newest backup older than the tombstone it chose, says which one, and gives the same stale-epoch warnings as `--backup-id`.

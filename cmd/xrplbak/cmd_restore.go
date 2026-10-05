@@ -202,6 +202,15 @@ func cmdVerify(args []string) error {
 		fmt.Fprintf(stdout, "  on-chain data: complete, %d chunk(s), %d file(s)\n", len(latest.Manifest.OnChain.Chunks), len(entries))
 	}
 	reportAttestation(latest.Manifest)
+	if latest.Manifest.Tombstone {
+		// A tombstone carries no data and no bundle, so there is nothing
+		// to check a bundle file against.
+		fmt.Fprintln(stdout, "  bundle:        none (a tombstone has no bundle)")
+		if *asJSON {
+			fmt.Fprintln(stdout, string(latest.Plain))
+		}
+		return fail(exitIncomplete, "the newest backup is a tombstone: the operator retired these backups. Pass --backup-id to verify an older one")
+	}
 	if *bundlePath != "" {
 		b, err := os.ReadFile(*bundlePath)
 		if err != nil {
@@ -212,7 +221,7 @@ func cmdVerify(args []string) error {
 		}
 		fmt.Fprintln(stdout, "  bundle:        matches the manifest and decrypts")
 	} else {
-		fmt.Fprintf(stdout, "  bundle:        not checked (pass --bundle FILE); expected sha256 %s\n", latest.Manifest.Bundle.CipherSHA256[:16])
+		fmt.Fprintf(stdout, "  bundle:        not checked (pass --bundle FILE); expected sha256 %s\n", prefix(latest.Manifest.Bundle.CipherSHA256, 16))
 	}
 	if *asJSON {
 		fmt.Fprintln(stdout, string(latest.Plain))
@@ -380,4 +389,14 @@ func cmdRestore(args []string) error {
 	hr("Written")
 	fmt.Fprintln(stdout, "  "+strings.Join(written, "\n  "))
 	return nil
+}
+
+// prefix returns the first n bytes of s, or all of s when it is shorter.
+// Manifest fields are authenticated but written by whoever holds the epoch
+// key, so their length is not trusted.
+func prefix(s string, n int) string {
+	if len(s) < n {
+		return s
+	}
+	return s[:n]
 }
