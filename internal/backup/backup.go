@@ -224,6 +224,11 @@ func Build(o Options) (*Plan, error) {
 		m.Bundle.CipherSHA256 = hex.EncodeToString(cSum[:])
 		m.Bundle.Len = len(p.Bundle)
 	}
+	if n, err := projectedManifestParts(m); err != nil {
+		return nil, err
+	} else if n > chunk.MaxManifestParts {
+		return nil, fmt.Errorf("the manifest needs %d parts; the limit is %d. Discovery would never find this backup. Use fewer --include files or shorter paths", n, chunk.MaxManifestParts)
+	}
 	p.AttestText = manifest.AttestString(m.BackupID, m.OnChain.PlainSHA256, m.Bundle.PlainSHA256)
 	if o.AttestPublicVPK != "" {
 		p.AttestPublicText = pubattest.SignString(o.AttestPublicVPK, sign.EncodeAddress(o.Key.AccountID[:]), o.Key.Epoch, o.Seq, m.BackupID)
@@ -270,6 +275,29 @@ func refuseSecrets(path string, raw []byte) error {
 	return nil
 }
 
+// projectedManifestParts counts the parts the manifest will need once
+// Submit fills in the chunk tx hashes and ledgers, the only fields that
+// grow after Build. Placeholders are the longest values those fields take.
+func projectedManifestParts(m *manifest.Manifest) (int, error) {
+	plain, err := projectedManifest(m)
+	if err != nil {
+		return 0, err
+	}
+	return (len(plain) + chunk.ManifestPartLen - 1) / chunk.ManifestPartLen, nil
+}
+
+// projectedManifest marshals a copy of m with the chunk tx fields at their
+// longest. The caller's manifest is left untouched.
+func projectedManifest(m *manifest.Manifest) ([]byte, error) {
+	draft := *m
+	draft.OnChain.Chunks = append([]manifest.Chunk(nil), m.OnChain.Chunks...)
+	for i := range draft.OnChain.Chunks {
+		draft.OnChain.Chunks[i].TxHash = strings.Repeat("F", 64)
+		draft.OnChain.Chunks[i].Ledger = math.MaxUint32
+	}
+	return manifest.Marshal(&draft)
+}
+
 // ManifestMemos encrypts the finished manifest into memo parts under a
 // fresh random nonce prefix. Call it once per sealing run; never re-seal a
 // manifest that already landed (Submit reuses recorded parts instead).
@@ -284,6 +312,9 @@ func ManifestMemos(key crypto.EpochKey, id []byte, m *manifest.Manifest) ([]code
 	}
 	kb := key.BackupKey(id)
 	n := (len(plain) + chunk.ManifestPartLen - 1) / chunk.ManifestPartLen
+	if n > chunk.MaxManifestParts {
+		return nil, nil, fmt.Errorf("the manifest needs %d parts; the limit is %d. Nothing was published", n, chunk.MaxManifestParts)
+	}
 	var memos []codec.Memo
 	for i := 0; i < n; i++ {
 		lo, hi := i*chunk.ManifestPartLen, (i+1)*chunk.ManifestPartLen

@@ -123,13 +123,20 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 	}
 	sets := map[setKey]*partSet{}
 	var order []setKey
+	oversized := map[setKey]uint16{}
 	for _, t := range txs {
 		if t.Account != account || t.Result != "tesSUCCESS" {
 			continue
 		}
 		for _, m := range t.Memos {
 			p, ok := chunk.Decode(m)
-			if !ok || p.Type != chunk.TypeManifest || p.Total > maxManifestParts {
+			if !ok || p.Type != chunk.TypeManifest {
+				continue
+			}
+			if p.Total > chunk.MaxManifestParts {
+				// Never opened: say so, rather than let an older backup
+				// pass as the newest.
+				oversized[setKey{p.BackupID, p.Nonce}] = p.Total
 				continue
 			}
 			k := setKey{p.BackupID, p.Nonce}
@@ -193,6 +200,10 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 		pending = still
 	}
 	var rejectedLedgers []uint32
+	for k, total := range oversized {
+		res.Rejected++
+		res.Warnings = append(res.Warnings, fmt.Sprintf("manifest %s has %d parts, above the limit of %d, and was not opened; it may be a newer backup made by a tool without this limit, or junk from someone holding the writer key", hex.EncodeToString(k.id[:8]), total, chunk.MaxManifestParts))
+	}
 	for _, k := range pending {
 		res.Rejected++
 		rejectedLedgers = append(rejectedLedgers, sets[k].lastLedger())
@@ -275,10 +286,6 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 	}
 	return res, nil
 }
-
-// maxManifestParts bounds memory on hostile memos. A real manifest is
-// under 4 KB, so 16 parts is far above any legitimate total.
-const maxManifestParts = 16
 
 type memoPart struct {
 	ct     []byte

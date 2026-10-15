@@ -32,6 +32,11 @@ const (
 	ManifestPartLen = container.BlockLen - 16
 	// MaxChunks caps on-chain container size at 8 x 960 bytes of plaintext.
 	MaxChunks = 8
+	// MaxManifestParts caps the manifest at 16 parts. Discovery ignores a
+	// manifest above it (bounded memory on hostile memos), so backup must
+	// refuse to build one: a manifest the ledger cannot give back is not a
+	// backup.
+	MaxManifestParts = 16
 )
 
 // Payload is a decoded memo.
