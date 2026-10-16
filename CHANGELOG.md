@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Build: Go 1.27.2. Go 1.27.1 carries standard library vulnerabilities in net/http, net/textproto and crypto/tls (govulncheck, 2026-10-12). The gosec job now reads the Go version from go.mod like the other jobs.
 - Fix: `backup` with enough `--include` files to push the manifest past 16 parts (about 80 files, depending on path length) built, submitted and anchored a backup that `verify` and `restore` could never find. They then reported the previous backup as complete with exit 0. `backup` now refuses at plan time with exit 1 and says to use fewer `--include` files. `verify` and `restore` count a manifest above the limit as rejected and warn, instead of ignoring it.
 - Fix: `init --rotate` moved the old key file to `xrplbak.key.epochN` even when a file with that name existed, and replaced it. It now picks a free name (`.epochN.2`, `.epochN.3`, ...) and prints it. No file is ever overwritten.
 
