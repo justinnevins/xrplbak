@@ -374,6 +374,21 @@ func (s *Submitter) anchorMemos() []codec.Memo {
 	return out
 }
 
+// onLedger reports whether the ledger being written to holds hash as a
+// validated, successful transaction sent by the writer account. Not found
+// is a plain no. Any other answer is unknown, and unknown is an error: an
+// unreachable ledger is never a reason to guess.
+func (s *Submitter) onLedger(hash string) (bool, error) {
+	rec, err := s.Client.Tx(hash)
+	if errors.Is(err, xrpl.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return rec.Validated && rec.Result == "tesSUCCESS" && rec.Account == s.Writer.Address(), nil
+}
+
 // Submit sends chunks, then the manifest, then the anchor. Each step waits
 // for validation. The dump is rewritten after every validated transaction
 // so an interrupted run can be resumed.
@@ -384,6 +399,10 @@ func (s *Submitter) Submit(p *Plan) error {
 	}
 	// Resume: match chunk ciphertext hashes to already-recorded transactions,
 	// and collect manifest parts already on the ledger, grouped by nonce.
+	// The dump only says what landed somewhere, so each transaction it
+	// records for this backup is confirmed on the ledger being written to
+	// before it counts. A dump carried to another network, or written
+	// before a reset, would otherwise skip chunks that ledger never saw.
 	recorded := map[string]dump.Tx{}
 	manifestParts := map[[crypto.ManifestNonceLen]byte]map[uint16]landed{}
 	for _, t := range s.Dump.Txs {
@@ -391,9 +410,24 @@ func (s *Submitter) Submit(p *Plan) error {
 		if err != nil {
 			continue
 		}
+		confirmed := false
+		checked := false
 		for _, m := range rec.Memos {
 			pl, ok := chunk.Decode(m)
 			if !ok || pl.BackupID != [16]byte(p.BackupID) {
+				continue
+			}
+			if !checked {
+				checked = true
+				confirmed, err = s.onLedger(t.Hash)
+				if err != nil {
+					return fmt.Errorf("resume: cannot confirm recorded tx %s on the ledger: %w", t.Hash, err)
+				}
+				if !confirmed {
+					s.Log("recorded tx %s is not on this ledger; resending", t.Hash)
+				}
+			}
+			if !confirmed {
 				continue
 			}
 			if pl.Type == chunk.TypeChunk {

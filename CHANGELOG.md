@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fix: `backup --submit` resumed from a dump file without asking the ledger it was writing to. A dump written against another network, or before a Devnet reset, made it skip every chunk and the manifest as "already on ledger", then write an anchor naming a manifest that ledger did not hold, and exit 0. Each transaction the dump records for the backup is now confirmed on the target ledger (validated, `tesSUCCESS`, sent by the writer account) before it counts. One that is not there is resent. If the ledger cannot be asked, the resume stops with exit 2 instead of guessing.
+
 ## v1.1.3 (2026-10-16)
 
 - Build: Go 1.27.2. Go 1.27.1 carries standard library vulnerabilities in net/http, net/textproto and crypto/tls (govulncheck, 2026-10-12). The gosec job now reads the Go version from go.mod like the other jobs.
