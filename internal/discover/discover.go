@@ -75,6 +75,18 @@ type Result struct {
 	// Conflict is set, and Latest left nil, when two different backups
 	// authenticate at the newest (epoch, seq). The tool never picks one.
 	Conflict string
+	// AnchorMissing is set when the anchor names a backup that was not
+	// found and nothing newer than it was found either. Latest is still the
+	// newest backup found, for callers that name it with --backup-id;
+	// without that, callers refuse.
+	AnchorMissing string
+}
+
+// newerThanAnchor reports whether m is a later (epoch, seq) than the anchor
+// names. A backup newer than the anchor means the anchor is stale, not
+// that the current backup is missing.
+func newerThanAnchor(m *manifest.Manifest, a *anchor.Record) bool {
+	return m.Epoch > a.Epoch || (m.Epoch == a.Epoch && m.Seq > a.Seq)
 }
 
 // maxEpochProbe bounds how many epochs the scan tries below the starting
@@ -259,7 +271,19 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 		}
 	}
 	if res.AnchorOK && res.Latest != nil && !res.Latest.FromAnchor {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor points at seq %d but seq %d exists and authenticates; possible rollback by a writer-key holder. Using seq %d.", res.Anchor.Seq, res.Latest.Manifest.Seq, res.Latest.Manifest.Seq))
+		if !newerThanAnchor(res.Latest.Manifest, res.Anchor) {
+			// The anchor names a backup that was not found, and nothing
+			// newer than it was found either. The current backup is out of
+			// reach here. That is not a rollback and not a complete result;
+			// the caller refuses unless the operator names a backup.
+			where := fmt.Sprintf("ledger %d", res.Anchor.ManifestLedger)
+			if res.Anchor.ManifestLedger == 0 {
+				where = "batched with the anchor"
+			}
+			res.AnchorMissing = fmt.Sprintf("DID anchor names backup %s (epoch %d seq %d, manifest tx %s, %s) but that manifest is not in the searched range %d to %d. The newest backup found is %s (epoch %d seq %d), which is not newer. Read from a server with full history, or the dump written at that backup; or pass --backup-id %s to use the older backup deliberately", hex.EncodeToString(res.Anchor.BackupID[:])[:16], res.Anchor.Epoch, res.Anchor.Seq, res.Anchor.TxHashHex(), where, rng.Min, rng.Max, res.Latest.Manifest.BackupID[:16], res.Latest.Manifest.Epoch, res.Latest.Manifest.Seq, res.Latest.Manifest.BackupID[:16])
+		} else {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor points at seq %d but seq %d exists and authenticates; possible rollback by a writer-key holder. Using seq %d.", res.Anchor.Seq, res.Latest.Manifest.Seq, res.Latest.Manifest.Seq))
+		}
 	}
 	if res.AnchorOK && res.Latest == nil && res.Conflict == "" {
 		where := fmt.Sprintf("ledger %d", res.Anchor.ManifestLedger)

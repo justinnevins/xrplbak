@@ -63,6 +63,9 @@ func (sf *sourceFlags) choose(res *discover.Result, account string) (*discover.C
 	if res.Conflict != "" {
 		return nil, fail(exitAuth, "%s", res.Conflict)
 	}
+	if res.AnchorMissing != "" {
+		return nil, fail(exitIncomplete, "%s", res.AnchorMissing)
+	}
 	if res.Latest == nil {
 		return nil, fail(exitAuth, "no backup authenticates for %s with this key in the searched range. Check the account address, the recovery key, and the epoch", account)
 	}
