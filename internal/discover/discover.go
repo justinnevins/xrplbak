@@ -113,6 +113,10 @@ const maxEpochProbe = 64
 func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, error) {
 	res := &Result{Account: account}
 	keys = &cachedKeys{k: keys, m: map[uint32]cachedKey{}}
+	// The operator's starting epoch (--epoch, or the key file) keeps its
+	// own window below it whatever the anchor says. The anchor can raise
+	// where the search starts, never the floor it reaches down to.
+	floor := epochHint
 
 	// 1. Anchor.
 	if data, err := c.LedgerEntryDID(account); err == nil {
@@ -183,7 +187,7 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 			res.Warnings = append(res.Warnings, fmt.Sprintf("manifest %s: only %d of %d parts in searched range", hex.EncodeToString(k.id[:8]), len(ps.parts), ps.total))
 			continue
 		}
-		cand, ok := openManifest(keys, k.id, k.nonce[:], ps, probeOrder(epochHint))
+		cand, ok := openManifest(keys, k.id, k.nonce[:], ps, probeOrder(epochHint, floor))
 		if !ok {
 			pending = append(pending, k)
 			continue
@@ -410,9 +414,15 @@ func openManifest(keys Keys, id [16]byte, nonce []byte, ps *partSet, epochs []ui
 }
 
 // probeOrder tries the hint, then earlier epochs, then later ones.
-func probeOrder(hint uint32) []uint32 {
+// probeOrder lists epochs to try: from hint down to maxEpochProbe below
+// floor (floor is the operator's own starting epoch, at most hint), then
+// maxEpochProbe above hint.
+func probeOrder(hint, floor uint32) []uint32 {
+	if floor > hint {
+		floor = hint
+	}
 	var out []uint32
-	for e := int64(hint); e >= 0 && len(out) < maxEpochProbe; e-- {
+	for e := int64(hint); e >= 0 && e >= int64(floor)-maxEpochProbe+1; e-- {
 		out = append(out, uint32(e))
 	}
 	for e := int64(hint) + 1; e <= int64(hint)+maxEpochProbe && e <= 0xFFFFFFFF; e++ {
