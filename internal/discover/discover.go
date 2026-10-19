@@ -82,6 +82,18 @@ type Result struct {
 	AnchorMissing string
 }
 
+// NetworkError is a transport or server failure while reading the ledger.
+// It is not an authentication failure: nothing was checked and found
+// wrong, the answer simply did not arrive. Callers map it to the network
+// exit code.
+type NetworkError struct {
+	Op  string
+	Err error
+}
+
+func (e *NetworkError) Error() string { return e.Op + ": " + e.Err.Error() }
+func (e *NetworkError) Unwrap() error { return e.Err }
+
 // newerThanAnchor reports whether m is a later (epoch, seq) than the anchor
 // names. A backup newer than the anchor means the anchor is stale, not
 // that the current backup is missing.
@@ -438,7 +450,7 @@ func Fetch(c xrpl.Client, keys Keys, res *Result, cand *Candidate) ([]container.
 				return nil, &chunk.MissingError{Kind: "chunk", Index: ch.Index, Total: int(total), Account: res.Account, MinLgr: res.Range.Min, MaxLgr: res.Range.Max}
 			}
 		} else if err != nil {
-			return nil, err
+			return nil, &NetworkError{Op: "fetch chunk " + fmt.Sprint(ch.Index+1), Err: err}
 		}
 		var found bool
 		for _, memo := range rec.Memos {

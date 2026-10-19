@@ -200,6 +200,10 @@ func cmdVerify(args []string) error {
 		if errors.As(err, &me) {
 			return fail(exitIncomplete, "%v", err)
 		}
+		var ne *discover.NetworkError
+		if errors.As(err, &ne) {
+			return fail(exitNetwork, "%v", err)
+		}
 		return fail(exitAuth, "%v", err)
 	default:
 		fmt.Fprintf(stdout, "  on-chain data: complete, %d chunk(s), %d file(s)\n", len(latest.Manifest.OnChain.Chunks), len(entries))
@@ -316,6 +320,10 @@ func cmdRestore(args []string) error {
 		var me *chunk.MissingError
 		if errors.As(err, &me) {
 			return fail(exitIncomplete, "%v", err)
+		}
+		var ne *discover.NetworkError
+		if errors.As(err, &ne) {
+			return fail(exitNetwork, "%v", err)
 		}
 		return fail(exitAuth, "%v", err)
 	}

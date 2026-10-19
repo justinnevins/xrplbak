@@ -4,6 +4,7 @@
 
 - Fix: `backup --submit` resumed from a dump file without asking the ledger it was writing to. A dump written against another network, or before a Devnet reset, made it skip every chunk and the manifest as "already on ledger", then write an anchor naming a manifest that ledger did not hold, and exit 0. Each transaction the dump records for the backup is now confirmed on the target ledger (validated, `tesSUCCESS`, sent by the writer account) before it counts. One that is not there is resent. If the ledger cannot be asked, the resume stops with exit 2 instead of guessing.
 - Fix: `verify` and `restore` with a DID anchor naming a backup whose manifest was not in the history being read (a thinned dump, a server with partial history) picked the newest backup they could find, called it a "possible rollback", and exited 0. `restore --write` wrote that older backup. They now refuse with exit 5, name the anchored backup and where its manifest should be, and say to read from a server with full history or pass `--backup-id` to use the older backup on purpose. The rollback warning remains for the case it was written for: a backup newer than the anchor.
+- Fix: `verify` and `restore` exited 4 (authentication) when the server failed while chunks were being fetched (an HTTP error on the `tx` call). That is a network failure and now exits 2. A missing chunk still exits 5 and a chunk that does not authenticate still exits 4.
 
 ## v1.1.3 (2026-10-16)
 
