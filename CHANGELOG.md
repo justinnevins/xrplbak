@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Build: Go 1.27.3. Go 1.27.2 carries GO-2026-6809 in crypto/x509 (`Certificate.Verify` did not refuse intermediate certificates that are no longer trusted; govulncheck, published 2026-10-21). The RPC client verifies HTTPS server certificates through crypto/x509, so the fix applies to every `--rpc` call over HTTPS.
 - Fix: `init` discarded the recovery words on one mistyped word in the re-entry check, or on one Ctrl-C before the key file was written, and the operator had to start over with 24 new words. Each word now gets three tries, and a miss says the words on paper are still the right ones. The first Ctrl-C explains that init has not stopped; a second one stops and says nothing was saved. The key file is still written only after the check passes.
 - `init` offers to clear the words from the screen once the key file is written, and says a terminal may keep them in its scrollback anyway. `--yes` asks nothing.
 - `init` no longer says "fund from a fresh path". It says what that meant: the funding payment is public and links the funding account to this backup.
