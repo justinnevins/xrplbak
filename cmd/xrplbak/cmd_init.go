@@ -7,9 +7,11 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/justinnevins/xrplbak/internal/crypto"
@@ -81,7 +83,17 @@ func cmdInit(args []string) error {
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Write the account address on the same paper. Restore needs the key AND the address.")
 
+	release := func() {}
 	if !*yes {
+		// From here until the key file is written, a Ctrl-C would void
+		// words the operator has already copied. The guard asks for a
+		// second one before giving up.
+		ch, stop := interrupts()
+		done := make(chan struct{})
+		go interruptGuard(ch, done)
+		var once sync.Once
+		release = func() { once.Do(func() { close(done); stop() }) }
+		defer release()
 		if !checkReentry(lines, *shares > 0) {
 			return fail(exitUsage, "re-entry check failed. Nothing was written. Run init again and copy carefully")
 		}
@@ -110,6 +122,8 @@ func cmdInit(args []string) error {
 		return err
 	}
 	crypto.Zero(root[:])
+	// The words are saved now. Ctrl-C goes back to stopping the process.
+	release()
 
 	hr("Done")
 	fmt.Fprintf(stdout, "  key file:  %s (mode 0600). It holds the epoch key and the writer seed, never the recovery key.\n", keyPath)
@@ -210,25 +224,83 @@ func moveAside(path, base string) (string, error) {
 	return "", fail(exitRefused, "%s and 99 numbered copies already exist; move some aside and rotate again", base)
 }
 
+// reentryAttempts is how many tries each word or share gets. Nothing is
+// saved until the check passes, so a typo costs a retry, not the words
+// already on paper.
+const reentryAttempts = 1 // STUB: one try, as before
+
+// reentryPicks returns the order in which line indexes are asked for. A
+// variable so tests can know which words the check will ask.
+var reentryPicks = func(n int) []int {
+	return rand.New(rand.NewSource(time.Now().UnixNano())).Perm(n)
+}
+
 // checkReentry asks for three random words (or one full share) so a
 // transcription error is caught before anything depends on it.
 func checkReentry(lines []string, isShares bool) bool {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	fmt.Fprintln(stdout)
+	picks := reentryPicks(len(lines))
 	if isShares {
-		i := r.Intn(len(lines))
-		got := prompt(fmt.Sprintf("Re-enter share %d of %d: ", i+1, len(lines)))
-		return sameShare(got, lines[i])
+		picks = picks[:1]
+	} else {
+		picks = picks[:3]
 	}
-	picks := r.Perm(len(lines))[:3]
 	for _, i := range picks {
-		got := prompt(fmt.Sprintf("Re-enter word %d: ", i+1))
-		if !strings.EqualFold(strings.TrimSpace(got), lines[i]) {
-			fmt.Fprintf(stdout, "  word %d does not match.\n", i+1)
-			return false
+		label := fmt.Sprintf("Re-enter word %d: ", i+1)
+		name := fmt.Sprintf("word %d", i+1)
+		match := func(got string) bool { return strings.EqualFold(strings.TrimSpace(got), lines[i]) }
+		if isShares {
+			label = fmt.Sprintf("Re-enter share %d of %d: ", i+1, len(lines))
+			name = fmt.Sprintf("share %d", i+1)
+			match = func(got string) bool { return sameShare(got, lines[i]) }
+		}
+		for try := 1; ; try++ {
+			fmt.Fprint(stdout, label)
+			got, ok := readLine()
+			if !ok {
+				fmt.Fprintln(stdout, "\n  no input.")
+				return false
+			}
+			if match(got) {
+				break
+			}
+			if try == reentryAttempts {
+				fmt.Fprintf(stdout, "  %s does not match, %d times.\n", name, reentryAttempts)
+				return false
+			}
+			fmt.Fprintf(stdout, "  %s does not match. Nothing is saved yet, and the words on your paper are still the right ones.\n", name)
+			fmt.Fprintf(stdout, "  Check the paper against the screen above, fix it if it differs, and try again (%d left).\n", reentryAttempts-try)
 		}
 	}
 	return true
+}
+
+// interrupts delivers Ctrl-C to init's guard. A variable so tests can send
+// one without signalling the test process.
+var interrupts = func() (<-chan os.Signal, func()) {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt)
+	return ch, func() { signal.Stop(ch) }
+}
+
+// exitNow ends the process. A variable so tests can observe the exit.
+var exitNow = os.Exit
+
+// interruptGuard runs while init holds recovery words that are printed but
+// not yet saved. A Ctrl-C there used to kill the process and void words the
+// operator had already written down; a terminal user can press it by habit,
+// or to copy. The first Ctrl-C only explains. The second stops, and says
+// plainly that nothing was saved.
+func interruptGuard(ch <-chan os.Signal, done <-chan struct{}) {
+	// STUB: the old behaviour, every Ctrl-C ends init at once.
+	for {
+		select {
+		case <-ch:
+			exitNow(exitUsage)
+		case <-done:
+			return
+		}
+	}
 }
 
 // sameShare compares a re-entered share with the one that was printed, using
