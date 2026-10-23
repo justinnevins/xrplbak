@@ -25,12 +25,36 @@ type File struct {
 	Mode   uint32
 	Data   []byte
 	Source string // "onchain", "bundle", "onchain+bundle", "onchain (bundle missing)"
-	// STUB: a plain flag, as before; the witness comes next.
-	complete bool
+	// proof is set only by checkComplete, after it compared Data with the
+	// manifest hash. It is unexported, so no caller outside this package
+	// can claim a file is complete.
+	proof completeness
 }
 
-// Complete reports the flag Build set.
-func (f File) Complete() bool { return f.complete }
+// completeness is the evidence that a file's bytes matched the manifest's
+// SHA-256. Its zero value proves nothing. checkComplete is the only
+// function that makes a non-zero one, and only after the comparison.
+type completeness struct {
+	digest [sha256.Size]byte
+	proven bool
+}
+
+// checkComplete compares data with the manifest hash and returns proof of
+// the match, or the zero value.
+func checkComplete(data []byte, wantHex string) completeness {
+	sum := sha256.Sum256(data)
+	if hex.EncodeToString(sum[:]) != wantHex {
+		return completeness{}
+	}
+	return completeness{digest: sum, proven: true}
+}
+
+// Complete reports whether f's bytes, as they are now, are the bytes that
+// matched the manifest. The digest is checked again on every call, so bytes
+// changed after Build lose the proof instead of keeping a stale "complete".
+func (f File) Complete() bool {
+	return f.proof.proven && sha256.Sum256(f.Data) == f.proof.digest
+}
 
 // Plan is the merged result plus what the operator still has to do by hand.
 type Plan struct {
@@ -92,7 +116,7 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, erro
 			p.Todo = append(p.Todo, fmt.Sprintf("%s is listed in the manifest but was not recovered (stored in: %s)", mf.Path, mf.Where))
 			continue
 		}
-		f.complete = contentMatches(f.Data, mf.SHA256)
+		f.proof = checkComplete(f.Data, mf.SHA256)
 		p.Files = append(p.Files, *f)
 		delete(byPath, mf.Path)
 	}
@@ -185,13 +209,6 @@ func isBidiControl(r rune) bool {
 		return true
 	}
 	return false
-}
-
-// contentMatches compares the produced bytes with the manifest hash, which
-// backup computed over the canonical form of the original file.
-func contentMatches(data []byte, wantHex string) bool {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]) == wantHex
 }
 
 // WriteTemp writes the plan into a fresh temp dir mirroring absolute paths.
