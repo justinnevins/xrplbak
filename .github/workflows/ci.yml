@@ -69,6 +69,10 @@ jobs:
             target: FuzzAcceptedPathStaysInsideRoot
           - pkg: ./internal/restore
             target: FuzzBuildNoPanic
+          - pkg: ./internal/restore
+            target: FuzzCompleteMeansHashMatches
+          - pkg: ./internal/backup
+            target: FuzzEveryBuiltPlanIsDiscovered
           - pkg: ./internal/dump
             target: FuzzLoadNoPanic
           - pkg: ./internal/dump
