@@ -125,9 +125,22 @@ func cmdInit(args []string) error {
 	// The words are saved now. Ctrl-C goes back to stopping the process.
 	release()
 
+	if !*yes {
+		what := "the 24 words"
+		if *shares > 0 {
+			what = "the shares"
+		}
+		if confirm(fmt.Sprintf("\nClear %s from this screen now? Do it once they are on paper.", what)) {
+			// Home, erase the screen, erase the scrollback.
+			fmt.Fprint(stdout, "\x1b[H\x1b[2J\x1b[3J")
+		}
+		fmt.Fprintf(stdout, "  note:      a terminal or SSH client may keep %s in its scrollback anyway. Close this window when you are done.\n", what)
+	}
+
 	hr("Done")
 	fmt.Fprintf(stdout, "  key file:  %s (mode 0600). It holds the epoch key and the writer seed, never the recovery key.\n", keyPath)
-	fmt.Fprintf(stdout, "  next:      fund %s with at least 1.5 XRP from a fresh path (1 XRP base reserve + 0.2 XRP DID reserve + fees).\n", writer.Address())
+	fmt.Fprintf(stdout, "  next:      fund %s with at least 1.5 XRP (1 XRP base reserve + 0.2 XRP DID reserve + fees).\n", writer.Address())
+	fmt.Fprintln(stdout, "             The payment is public: anyone can see which account funded this one. Send it from an account you are content to link to this backup.")
 	fmt.Fprintln(stdout, "  then:      xrplbak backup            (dry run, safe)")
 	fmt.Fprintln(stdout, "             xrplbak backup --submit --rpc mainnet")
 	return nil
@@ -227,7 +240,7 @@ func moveAside(path, base string) (string, error) {
 // reentryAttempts is how many tries each word or share gets. Nothing is
 // saved until the check passes, so a typo costs a retry, not the words
 // already on paper.
-const reentryAttempts = 1 // STUB: one try, as before
+const reentryAttempts = 3
 
 // reentryPicks returns the order in which line indexes are asked for. A
 // variable so tests can know which words the check will ask.
@@ -292,15 +305,20 @@ var exitNow = os.Exit
 // or to copy. The first Ctrl-C only explains. The second stops, and says
 // plainly that nothing was saved.
 func interruptGuard(ch <-chan os.Signal, done <-chan struct{}) {
-	// STUB: the old behaviour, every Ctrl-C ends init at once.
-	for {
-		select {
-		case <-ch:
-			exitNow(exitUsage)
-		case <-done:
-			return
-		}
+	select {
+	case <-ch:
+	case <-done:
+		return
 	}
+	fmt.Fprintln(stdout, "\n  Ctrl-C does not stop init here, so the words on your paper stay valid.")
+	fmt.Fprintln(stdout, "  Keep going with the question above. Press Ctrl-C again to quit without saving.")
+	select {
+	case <-ch:
+	case <-done:
+		return
+	}
+	fmt.Fprintln(stdout, "\n  Stopped. Nothing was saved. Cross out the words above: they will never be used.")
+	exitNow(exitUsage)
 }
 
 // sameShare compares a re-entered share with the one that was printed, using
