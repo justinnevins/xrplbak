@@ -388,6 +388,7 @@ func cmdRestore(args []string) error {
 		hr("Dry run")
 		fmt.Fprintf(stdout, "  files written under %s\n", dir)
 		fmt.Fprintln(stdout, "  Inspect them. Then re-run with --write --target /etc/xrpld to place them.")
+		fmt.Fprintln(stdout, "  The files keep their backed-up mode. Owner and group are not restored.")
 		return nil
 	}
 	if !*yes && !confirm(fmt.Sprintf("  Write %d file(s) into %s?", len(plan.Files), *target)) {
@@ -399,8 +400,18 @@ func cmdRestore(args []string) error {
 	}
 	hr("Written")
 	fmt.Fprintln(stdout, "  "+strings.Join(written, "\n  "))
+	fmt.Fprintln(stdout, ownerNote)
 	return nil
 }
+
+// ownerNote is printed after files are written. A backup records each
+// file's mode, not its owner or group, so the files belong to whoever ran
+// restore. xrpld usually runs as its own user and stops at start if it
+// cannot read its config; a plain chmod 0640 on a root-owned file does that.
+const ownerNote = `  owner:     a backup keeps each file's mode, not its owner or group. These files belong
+             to the user who ran restore. Before starting xrpld, give the user it runs as
+             read access (find it with: systemctl show -p User <service>). See
+             docs/restore-ceremony.md step 9.`
 
 // prefix returns the first n bytes of s, or all of s when it is shorter.
 // Manifest fields are authenticated but written by whoever holds the epoch

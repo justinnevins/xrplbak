@@ -20,7 +20,7 @@ Print this. Keep it with the recovery words.
 6. If the old host still exists, stop xrpld there. One validator token must run in one place.
 7. Write: add `--write --target /etc/xrpld` (or the legacy path). Add `--force` only if you mean to overwrite.
 8. If the validator token was not restored, run `validator-keys create_token` with the offline master key, add `[validator_token]`, and update the offline key file's backup.
-9. `chown` the files to the xrpld user, `chmod 0600` the config, start xrpld, check `server_info`.
+9. Set owner and group. Restore keeps each file's mode, not its owner or group, so the files belong to whoever ran restore. Find the user xrpld runs as: `systemctl show -p User xrpld`. Then either `chown` the files to that user and `chmod 0600` the config, or keep them owned by root with `chgrp` to that user's group and `chmod 0640`. Check it without printing anything: `sudo -u <user> test -r /etc/xrpld/xrpld.cfg && echo readable`. xrpld does not start if it cannot read its config. Then start xrpld and check `server_info`.
 10. Take a fresh backup from the new host.
 
 ## If something fails
