@@ -162,7 +162,7 @@ The short version, in ten lines:
 9. Builds are reproducible. Compare hashes, or rebuild and compare.
 10. Losing the recovery words loses everything. Write them on paper.
 
-Full threat model: [docs/threat-model.md](docs/threat-model.md). Cryptography: [docs/crypto.md](docs/crypto.md). To report a vulnerability, see [SECURITY.md](SECURITY.md).
+Full threat model: [docs/threat-model.md](docs/threat-model.md). Cryptography: [docs/crypto.md](docs/crypto.md). What the tool trusts without checking: [docs/trusted-base.md](docs/trusted-base.md). To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ### Quantum computers
 
@@ -243,7 +243,7 @@ v1 uses AccountSet, DIDSet, DIDDelete, account_tx, tx, ledger_entry, and feature
 
 ### Tested
 
-Unit tests cover redaction refusals, chunk sizing, reassembly, truncated history, wrong keys, rollback, tombstones, resume, and the HTTP client against a fake ledger. An adversarial corpus (`cmd/xrplbak/corpus_test.go`) drives 38 hostile inputs through the real command surface and checks the exit code of each refusal. Fuzz targets run in CI, as do govulncheck, gosec, CodeQL and OpenSSF Scorecard. The full flow ran on XRPL Testnet on 2026-09-15, and a full backup and restore runs against Devnet every day.
+Unit tests cover redaction refusals, chunk sizing, reassembly, truncated history, wrong keys, rollback, tombstones, resume, and the HTTP client against a fake ledger. An adversarial corpus (`cmd/xrplbak/corpus_test.go`) drives 38 hostile inputs through the real command surface and checks the exit code of each refusal. Fuzz targets run in CI, as do govulncheck, gosec, CodeQL and OpenSSF Scorecard. The full flow ran on XRPL Testnet on 2026-09-15, and a full backup and restore runs against Testnet every day.
 
 ### Primary references
 

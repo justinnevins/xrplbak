@@ -103,11 +103,20 @@ Give the operator this command to run themselves:
 It prints 24 words, asks them to re-enter three to prove the copy, writes
 `xrplbak.key`, and prints the writer account address (`r...`). The words go
 on paper, never into a file on this machine or into chat. The operator tells
-you only the account address.
+you only the account address. A mistyped word is asked again, and one Ctrl-C
+does not stop init, so the words on paper stay valid. Init then offers to
+clear them from the screen.
+
+If the key file goes in a folder only root can write, such as `/etc/xrpld`,
+have the operator open a root shell first with `sudo -i`, as a command on
+its own, then give later commands without `sudo`. A `sudo` in front of each
+command fails at a `cd` into a root-only folder, and a line pasted together
+with `sudo -i` can be lost when the root shell starts.
 
 The writer account needs at least 1.5 XRP: 1 XRP base reserve, 0.2 XRP for
 the DID entry, and fees of about 10 drops per transaction. Tell the operator
-to send it from their own wallet. Do not handle their funds.
+to send it from their own wallet. Do not handle their funds. The funding
+payment is public, so anyone can link the funding account to this backup.
 
 ## Step 4: review the split
 

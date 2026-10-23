@@ -14,7 +14,7 @@
 
 | Adversary | What they get | What stops them |
 |---|---|---|
-| Anyone reading the ledger forever | Ciphertext, chunk count, timing, the writer account | AES-256-GCM under per-backup keys. No public-key encryption, so no harvest-now-decrypt-later. |
+| Anyone reading the ledger forever | Ciphertext, chunk count, timing, the writer account, and the account that funded it | AES-256-GCM under per-backup keys. No public-key encryption, so no harvest-now-decrypt-later. The funding payment is public: fund the writer account from an account you are content to link to it. |
 | Holder of the operator's hot wallet | Nothing. The writer account is separate. | |
 | Thief of the writer key or the host key file | Can post junk, move or delete the anchor, decrypt that epoch's backups, spend the small balance | Junk fails authentication and cannot shadow real parts (every ciphertext per index is tried). A moved anchor triggers a rollback warning. Rotate the epoch with `init --rotate`. |
 | Lying or partial history server | Can withhold | Every error names the searched range. Verify against a second source or the dump. |

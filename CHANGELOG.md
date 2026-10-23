@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Fix: `init` discarded the recovery words on one mistyped word in the re-entry check, or on one Ctrl-C before the key file was written, and the operator had to start over with 24 new words. Each word now gets three tries, and a miss says the words on paper are still the right ones. The first Ctrl-C explains that init has not stopped; a second one stops and says nothing was saved. The key file is still written only after the check passes.
+- `init` offers to clear the words from the screen once the key file is written, and says a terminal may keep them in its scrollback anyway. `--yes` asks nothing.
+- `init` no longer says "fund from a fresh path". It says what that meant: the funding payment is public and links the funding account to this backup.
+- `restore` says that a backup keeps each file's mode, not its owner or group, and `--write` says how to give the xrpld service user read access. `docs/restore-ceremony.md` step 9 spells out both safe settings.
+- `restore`: a file reads `complete` only through a proof that the SHA-256 of its bytes equals the manifest's, checked again against the bytes each time it is read. No other code path can mark a file complete.
+- Tests: a property target, `FuzzEveryBuiltPlanIsDiscovered`, submits every plan `backup` accepts to the fake ledger and checks that discovery finds it and restore marks it complete. Run against the code before the F-057 fix, it fails. `FuzzCompleteMeansHashMatches` pins the completeness rule. Both run in CI.
+- Docs: `docs/trusted-base.md` lists what the tool trusts without checking. The README says the daily live run is on Testnet. The AI assistant guide covers the root shell and the public funding link.
+
 ## v1.1.4 (2026-10-19)
 
 - Fix: `backup --submit` resumed from a dump file without asking the ledger it was writing to. A dump written against another network, or before a Devnet reset, made it skip every chunk and the manifest as "already on ledger", then write an anchor naming a manifest that ledger did not hold, and exit 0. Each transaction the dump records for the backup is now confirmed on the target ledger (validated, `tesSUCCESS`, sent by the writer account) before it counts. One that is not there is resent. If the ledger cannot be asked, the resume stops with exit 2 instead of guessing.
