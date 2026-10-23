@@ -161,7 +161,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("files %d", len(plan.Files))
 	}
 	for _, f := range plan.Files {
-		if !f.Complete {
+		if !f.Complete() {
 			t.Fatalf("%s incomplete (%s):\n%s", f.Path, f.Source, f.Data)
 		}
 	}
@@ -186,7 +186,7 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if partial.Files[0].Complete || !strings.Contains(partial.Todo[0], "validator token") {
+	if partial.Files[0].Complete() || !strings.Contains(partial.Todo[0], "validator token") {
 		t.Fatalf("bundle-less restore: %+v", partial.Todo)
 	}
 

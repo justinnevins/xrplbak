@@ -351,7 +351,7 @@ func cmdRestore(args []string) error {
 		// case and it exits 0. Two different meanings under one word made
 		// a correct, expected outcome read as a failure.
 		state := "complete"
-		if !f.Complete {
+		if !f.Complete() {
 			state = "PARTIAL"
 			partial = true
 		}
@@ -375,7 +375,7 @@ func cmdRestore(args []string) error {
 		}
 		var rows []row
 		for _, f := range plan.Files {
-			rows = append(rows, row{f.Path, f.Source, f.Complete})
+			rows = append(rows, row{f.Path, f.Source, f.Complete()})
 		}
 		b, _ := json.MarshalIndent(map[string]any{"files": rows, "todo": plan.Todo}, "", " ")
 		fmt.Fprintln(stdout, string(b))

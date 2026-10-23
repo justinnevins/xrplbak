@@ -21,12 +21,16 @@ import (
 
 // File is one path the restore will produce.
 type File struct {
-	Path     string
-	Mode     uint32
-	Data     []byte
-	Source   string // "onchain", "bundle", "onchain+bundle", "onchain (bundle missing)"
-	Complete bool   // true when the SHA-256 matches the manifest's original
+	Path   string
+	Mode   uint32
+	Data   []byte
+	Source string // "onchain", "bundle", "onchain+bundle", "onchain (bundle missing)"
+	// STUB: a plain flag, as before; the witness comes next.
+	complete bool
 }
+
+// Complete reports the flag Build set.
+func (f File) Complete() bool { return f.complete }
 
 // Plan is the merged result plus what the operator still has to do by hand.
 type Plan struct {
@@ -88,7 +92,7 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, erro
 			p.Todo = append(p.Todo, fmt.Sprintf("%s is listed in the manifest but was not recovered (stored in: %s)", mf.Path, mf.Where))
 			continue
 		}
-		f.Complete = contentMatches(f.Data, mf.SHA256)
+		f.complete = contentMatches(f.Data, mf.SHA256)
 		p.Files = append(p.Files, *f)
 		delete(byPath, mf.Path)
 	}

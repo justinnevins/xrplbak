@@ -87,7 +87,7 @@ func TestBatchTailIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range plan.Files {
-		if !f.Complete {
+		if !f.Complete() {
 			t.Fatalf("%s incomplete after a batched backup", f.Path)
 		}
 	}
@@ -220,8 +220,8 @@ func TestBatchChunksFirstThenAtomicTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	orig, _ := os.ReadFile(o.ConfigPath)
-	if !plan.Files[0].Complete || string(plan.Files[0].Data) != string(orig) {
-		t.Fatalf("restored config differs (complete=%v)", plan.Files[0].Complete)
+	if !plan.Files[0].Complete() || string(plan.Files[0].Data) != string(orig) {
+		t.Fatalf("restored config differs (complete=%v)", plan.Files[0].Complete())
 	}
 }
 
