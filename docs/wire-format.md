@@ -67,6 +67,8 @@ Optional wrap: `"XBKW" | u8 1 | salt(16) | AES-256-GCM(PBKDF2-HMAC-SHA256(passph
 
 The validator master key signs the ASCII string `xrplbak/v1/attest <backup_id> <onchain plain_sha256> <bundle plain_sha256>`. v1 verifies ed25519 keys only.
 
+This is the team attestation, stored inside the encrypted manifest. `backup` stopped writing it in v1.1.6 (`--attestation` and `--attestation-key` now refuse). `verify` still reads and checks it in older backups. The public and delegated attestations are the supported paths.
+
 The signed bytes were confirmed against source on 2026-09-15:
 
 - `validator-keys sign <data>` calls `strHex(xrpl::sign(publicKey, secretKey, makeSlice(data)))` (ripple/validator-keys-tool `src/ValidatorKeys.cpp`, `ValidatorKeys::sign`). The argument is signed as its raw bytes. It is not hex-decoded first. The output is hex.

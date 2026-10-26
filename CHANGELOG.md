@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Removed: `backup --attestation` and `--attestation-key` (the team attestation inside the encrypted manifest). Only a holder of the recovery words could check it, and `backup` published it without checking the signature. A signature over the wrong string, or over the string a dry run printed for seq 1 when the ledger already held a backup, was stored for good and read as INVALID. Both flags now refuse with exit 1 and point to `--attest`. `verify` still reads team attestations in older backups. Use `--attest` (delegated key) or `--attest-public-key` for a public attestation.
+
 ## v1.1.5 (2026-10-23)
 
 - Build: Go 1.27.3. Go 1.27.2 carries GO-2026-6809 in crypto/x509 (`Certificate.Verify` did not refuse intermediate certificates that are no longer trusted; govulncheck, published 2026-10-21). The RPC client verifies HTTPS server certificates through crypto/x509, so the fix applies to every `--rpc` call over HTTPS.

@@ -40,7 +40,6 @@ type Options struct {
 	Key            *crypto.KeyFile
 	Now            time.Time
 	Tombstone      bool
-	Attestation    *manifest.Attestation
 	// Comments says where the operator's comments go. The zero value keeps
 	// them in the off-chain bundle.
 	Comments redact.Mode
@@ -203,7 +202,6 @@ func Build(o Options) (*Plan, error) {
 	}
 	m.Supersedes = o.Supersedes
 	m.Tombstone = o.Tombstone
-	m.Attestation = o.Attestation
 
 	p := &Plan{BackupID: id, Manifest: m, Moves: moves, Role: role, OnChainTxt: onTxt}
 	if !o.Tombstone {
