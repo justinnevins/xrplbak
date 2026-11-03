@@ -342,6 +342,9 @@ func cmdRestore(args []string) error {
 	if err != nil {
 		return fail(exitRefused, "%v", err)
 	}
+	// Same line verify prints. A team attestation is reported, never
+	// enforced: the bytes are authenticated by the backup key either way.
+	reportAttestation(cand.Manifest)
 	hr("Files")
 	partial := false
 	for _, f := range plan.Files {
