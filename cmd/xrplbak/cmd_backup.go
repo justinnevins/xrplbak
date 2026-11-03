@@ -258,7 +258,12 @@ func planReport(p *backup.Plan, o backup.Options) {
 	hr("Redactions (kept only in the off-chain bundle)")
 	summarizeMoves(p.Moves)
 	hr("On-chain")
-	fmt.Fprintf(stdout, "  %d chunk transaction(s) + manifest + DID anchor, about %d drops in fees at the base rate\n", len(p.Chunks), (len(p.Chunks)+2)*10)
+	// One transaction per chunk, per manifest part and for the DID anchor.
+	// The part count is a projection the sealed manifest may undercut by
+	// one, so the figure is a ceiling. Batches (XLS-56) cost (inner + 2)
+	// base fees each; backup.BaseFees knows the layout Submit uses.
+	c, k := len(p.Chunks), p.ManifestParts
+	fmt.Fprintf(stdout, "  %d chunk transaction(s) + %d manifest part(s) + DID anchor: %d transactions, up to %d drops in fees at the base rate (%d drops with --batch)\n", c, k, c+k+1, backup.BaseFees(c, k, false)*10, backup.BaseFees(c, k, true)*10)
 	for i, c := range p.Chunks {
 		sum := sha256.Sum256(c)
 		fmt.Fprintf(stdout, "  chunk %d: %d bytes ciphertext, sha256 %s\n", i+1, len(c), hex.EncodeToString(sum[:8]))
