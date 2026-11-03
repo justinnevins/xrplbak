@@ -99,7 +99,7 @@ func cmdBackup(args []string) error {
 	tombstone := fs.Bool("tombstone", false, "publish a tombstone that marks earlier backups as retired")
 	deleteAnchor := fs.Bool("delete-anchor", false, "with --tombstone only: also delete the DID entry (frees 0.2 XRP)")
 	forceSeq := fs.Bool("force-seq", false, "submit even when existing backups could not be read (risks a duplicate seq)")
-	vpk := fs.String("validator-key", "", "validator public key (nHB...) to bind, stored only as a hash inside the ciphertext")
+	vpk := fs.String("validator-key", "", "validator public key (nHB...) to label this backup with; stored only as a hash inside the ciphertext, for your records, and not checked by verify or restore")
 	attest := fs.String("attestation", "", "removed in v1.1.6; use --attest")
 	attestVPK := fs.String("attestation-key", "", "removed in v1.1.6; use --attest")
 	comments := fs.String("comments", "bundle", commentsFlagHelp)
