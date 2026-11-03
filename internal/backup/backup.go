@@ -70,6 +70,10 @@ type Plan struct {
 	// AttestPublicText is the string the validator master key signs for a
 	// public attestation, empty unless AttestPublicVPK was given.
 	AttestPublicText string
+	// ManifestParts is the number of manifest transactions the run will
+	// send, projected with the chunk tx fields at their longest. Submit
+	// seals the real manifest and may need one part fewer, never more.
+	ManifestParts int
 }
 
 // Build reads, redacts, encodes, and encrypts. It never touches the network.
@@ -222,11 +226,14 @@ func Build(o Options) (*Plan, error) {
 		m.Bundle.CipherSHA256 = hex.EncodeToString(cSum[:])
 		m.Bundle.Len = len(p.Bundle)
 	}
-	if n, err := projectedManifestParts(m); err != nil {
+	n, err := projectedManifestParts(m)
+	if err != nil {
 		return nil, err
-	} else if n > chunk.MaxManifestParts {
+	}
+	if n > chunk.MaxManifestParts {
 		return nil, fmt.Errorf("the manifest needs %d parts; the limit is %d. Discovery would never find this backup. Use fewer --include files or shorter paths", n, chunk.MaxManifestParts)
 	}
+	p.ManifestParts = n
 	p.AttestText = manifest.AttestString(m.BackupID, m.OnChain.PlainSHA256, m.Bundle.PlainSHA256)
 	if o.AttestPublicVPK != "" {
 		p.AttestPublicText = pubattest.SignString(o.AttestPublicVPK, sign.EncodeAddress(o.Key.AccountID[:]), o.Key.Epoch, o.Seq, m.BackupID)
