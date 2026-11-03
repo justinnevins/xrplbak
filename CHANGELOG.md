@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## v1.1.6 (2026-11-03)
 
 - Removed: `backup --attestation` and `--attestation-key` (the team attestation inside the encrypted manifest). Only a holder of the recovery words could check it, and `backup` published it without checking the signature. A signature over the wrong string, or over the string a dry run printed for seq 1 when the ledger already held a backup, was stored for good and read as INVALID. Both flags now refuse with exit 1 and point to `--attest`. `verify` still reads team attestations in older backups. Use `--attest` (delegated key) or `--attest-public-key` for a public attestation.
+- `restore` prints the same `attestation:` line `verify` prints, so a backup whose team attestation is INVALID says so on restore too. The line is reported, never enforced: the backup key authenticates the bytes either way.
+- `backup --validator-key` help no longer says it binds the backup to a validator. It stores a hash inside the ciphertext for the operator's records. `verify` and `restore` do not check it.
+- Fix: the plan and dry-run fee estimate counted the manifest as one transaction and ignored `--batch`. It now counts every manifest part and the batch layout, and prints both figures. The part count is a ceiling. A balance short of reserve plus fee still stopped a real run before any transaction.
+- Fix: `open_ledger_fee` from the `fee` RPC and `Balance` from `account_info` were read leniently (`"1e6"` read as 1 drop, `"12abc"` as 12, a parse failure fell back to the base fee). Both now go through one parser that accepts only an unsigned decimal string and refuses anything else. An absent `open_ledger_fee` still means the base fee.
 
 ## v1.1.5 (2026-10-23)
 
