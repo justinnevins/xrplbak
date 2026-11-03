@@ -15,8 +15,9 @@ import (
 // TestDryRunShowsTeamAttestationOnlyWhenAsked pins that the plan does not
 // print the team attestation string to every operator. It once appeared in
 // every dry run, beside the public attestation an operator had asked for,
-// and read as a step they had to take. --attestation-key on a dry run
-// still prints the string to sign.
+// and read as a step they had to take. The team attestation is removed
+// (F-064, v1.1.6), so --attestation-key on a dry run now refuses and never
+// prints the string; TestF064TeamAttestationFlagsRefused pins the refusal.
 func TestDryRunShowsTeamAttestationOnlyWhenAsked(t *testing.T) {
 	w := newWorld(t, 7)
 	vpk, _ := validatorKey(t)
@@ -28,8 +29,8 @@ func TestDryRunShowsTeamAttestationOnlyWhenAsked(t *testing.T) {
 		t.Errorf("a plain dry run prints the team attestation:\n%s", plain.out)
 	}
 	asked := w.run("", "backup", "--config", w.cfgPath, "--key", w.keyFile, "--out", t.TempDir(), "--attestation-key", vpk)
-	if asked.code != exitOK || !strings.Contains(asked.out, "xrplbak/v1/attest ") {
-		t.Errorf("a dry run with --attestation-key must print the string to sign: exit %d\n%s", asked.code, asked.out)
+	if asked.code != exitUsage || strings.Contains(asked.out, "xrplbak/v1/attest ") {
+		t.Errorf("a dry run with --attestation-key must refuse without printing the team string: exit %d\n%s", asked.code, asked.out)
 	}
 }
 

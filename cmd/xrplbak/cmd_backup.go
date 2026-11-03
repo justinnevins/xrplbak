@@ -12,7 +12,6 @@ import (
 	"github.com/justinnevins/xrplbak/internal/backup"
 	"github.com/justinnevins/xrplbak/internal/cfg"
 	"github.com/justinnevins/xrplbak/internal/dump"
-	"github.com/justinnevins/xrplbak/internal/manifest"
 	"github.com/justinnevins/xrplbak/internal/pubattest"
 	"github.com/justinnevins/xrplbak/internal/redact"
 	"github.com/justinnevins/xrplbak/internal/xrpl"
@@ -101,8 +100,8 @@ func cmdBackup(args []string) error {
 	deleteAnchor := fs.Bool("delete-anchor", false, "with --tombstone only: also delete the DID entry (frees 0.2 XRP)")
 	forceSeq := fs.Bool("force-seq", false, "submit even when existing backups could not be read (risks a duplicate seq)")
 	vpk := fs.String("validator-key", "", "validator public key (nHB...) to bind, stored only as a hash inside the ciphertext")
-	attest := fs.String("attestation", "", "team setups only: hex signature over the private attest string, kept inside the encrypted manifest. Most operators want --attest")
-	attestVPK := fs.String("attestation-key", "", "team setups only: validator public key (nHB...) for --attestation. On a dry run alone, prints the string to sign")
+	attest := fs.String("attestation", "", "removed in v1.1.6; use --attest")
+	attestVPK := fs.String("attestation-key", "", "removed in v1.1.6; use --attest")
 	comments := fs.String("comments", "bundle", commentsFlagHelp)
 	peers := fs.String("peers", "bundle", peersFlagHelp)
 	batch := fs.String("batch", "auto", batchFlagHelp)
@@ -202,17 +201,11 @@ func cmdBackup(args []string) error {
 		sum := sha256.Sum256(pub)
 		o.VPKSHA256 = hex.EncodeToString(sum[:])
 	}
-	if *attest != "" && *attestVPK == "" || *attestVPK != "" && *attest == "" && *submit {
-		return fail(exitUsage, "--attestation and --attestation-key go together; run a dry run with --attestation-key alone to print the string to sign")
-	}
-	if *attest != "" {
-		if _, err := sign.DecodeNodePublic(*attestVPK); err != nil {
-			return err
-		}
-		if _, err := hex.DecodeString(*attest); err != nil {
-			return fail(exitUsage, "--attestation must be hex")
-		}
-		o.Attestation = &manifest.Attestation{Scheme: "ed25519", VPK: *attestVPK, Sig: strings.ToUpper(*attest)}
+	if *attest != "" || *attestVPK != "" {
+		// The team attestation sat inside the encrypted manifest, so only a
+		// holder of the recovery words could check it, and it was published
+		// without being checked (F-064). The public attestation does the job.
+		return fail(exitUsage, "--attestation and --attestation-key were removed in v1.1.6. Use --attest for a public attestation (see xrplbak attest-key). Backups made with them still verify")
 	}
 
 	var warns []string
@@ -242,10 +235,10 @@ func cmdBackup(args []string) error {
 			fmt.Fprintln(stdout, "  The delegation must already be on the ledger, or pass --attest-delegation-sig to publish it with this backup.")
 		}
 	}
-	return doDryRun(o, warns, *out, *attestVPK != "")
+	return doDryRun(o, warns, *out)
 }
 
-func planReport(p *backup.Plan, o backup.Options, showTeam bool) {
+func planReport(p *backup.Plan, o backup.Options) {
 	m := p.Manifest
 	hr("Plan")
 	fmt.Fprintf(stdout, "  backup id:   %s\n", m.BackupID)
@@ -272,11 +265,6 @@ func planReport(p *backup.Plan, o backup.Options, showTeam bool) {
 	}
 	hr("Off-chain bundle")
 	fmt.Fprintf(stdout, "  %d bytes encrypted. Keep it in two places. Its hash is in the manifest.\n", len(p.Bundle))
-	if showTeam {
-		hr("Team attestation (inside the encrypted manifest)")
-		fmt.Fprintln(stdout, "  sign this exact string offline with validator-keys sign, then pass --attestation:")
-		fmt.Fprintln(stdout, "  "+p.AttestText)
-	}
 	if p.AttestPublicText != "" {
 		hr("Public attestation (optional, on-chain, cleartext)")
 		fmt.Fprintln(stdout, "  This publishes, in the clear and permanently, that your validator")
@@ -288,12 +276,12 @@ func planReport(p *backup.Plan, o backup.Options, showTeam bool) {
 	}
 }
 
-func doDryRun(o backup.Options, warns []string, out string, showTeam bool) error {
+func doDryRun(o backup.Options, warns []string, out string) error {
 	p, err := backup.Build(o)
 	if err != nil {
 		return err
 	}
-	planReport(p, o, showTeam)
+	planReport(p, o)
 	for _, w := range warns {
 		fmt.Fprintln(stdout, "  NOTE:", w)
 	}
@@ -321,8 +309,8 @@ func writeBundle(p *backup.Plan, out string) error {
 }
 
 func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor, yes bool, batch, attestPubKey, attestPubSig string, warns []string, att *attestKey, delegSig, rpcArg, keyPath string) error {
-	if o.Tombstone && (attestPubKey != "" || attestPubSig != "" || att != nil || o.Attestation != nil || o.AttestPublicVPK != "") {
-		return fail(exitUsage, "a tombstone carries no attestation; drop --attest, --attest-public-key and --attestation")
+	if o.Tombstone && (attestPubKey != "" || attestPubSig != "" || att != nil || o.AttestPublicVPK != "") {
+		return fail(exitUsage, "a tombstone carries no attestation; drop --attest and --attest-public-key")
 	}
 	if deleteAnchor && !o.Tombstone {
 		return fail(exitUsage, "--delete-anchor needs --tombstone")
@@ -331,7 +319,7 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 	if err != nil {
 		return err
 	}
-	planReport(p, o, false)
+	planReport(p, o)
 	var attestMemo, delegMemo *codec.Memo
 	if att != nil {
 		dm, am, err := delegatedMemos(client, writer.Address(), att, delegSig, p)
@@ -405,9 +393,6 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 		fmt.Fprintf(stdout, "  attestation:    published, signed by delegated attestation key %d. Check it: xrplbak attest-verify --rpc %s --account %s\n", att.DSeq, verifyRPC(rpcArg, source), writer.Address())
 	case attestMemo != nil:
 		fmt.Fprintf(stdout, "  attestation:    published, signed by the validator master key. Check it: xrplbak attest-verify --rpc %s --account %s\n", verifyRPC(rpcArg, source), writer.Address())
-	}
-	if o.Attestation != nil {
-		fmt.Fprintln(stdout, "  team attestation: included in the encrypted manifest")
 	}
 	tip := "xrplbak verify --rpc " + verifyRPC(rpcArg, source)
 	if keyPath != "" {

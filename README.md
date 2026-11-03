@@ -63,7 +63,7 @@ Back up again after you change the config. Validator configs change rarely, so a
 xrplbak init                              # once, on any machine: words, key file, writer account
 xrplbak init --rotate                     # after a host compromise: next epoch key from the words
 xrplbak redact                            # see the split; nothing is written or sent
-xrplbak backup                            # dry run: plan, bundle file, attest string
+xrplbak backup                            # dry run: plan and bundle file
 xrplbak backup --submit --rpc mainnet     # writes chunks, manifest, anchor; saves dump + bundle
 xrplbak verify --rpc mainnet              # find and authenticate backups
 xrplbak verify --dump xrplbak-out/<id>.dump.json
