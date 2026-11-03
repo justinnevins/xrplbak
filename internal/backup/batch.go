@@ -298,6 +298,35 @@ func (s *Submitter) sendAnchor(p *Plan, manifestHash string, manifestLedger uint
 	return s.saveDump()
 }
 
+// BaseFees counts the base fees a run with c chunks and k manifest parts
+// pays. Sequential: one per transaction, the anchor included. Batched: the
+// layout submitBatched uses, where rippled charges (inner + 2) base fees per
+// Batch and a lone transaction goes plain. The plan report multiplies this
+// by the base fee, so it has to agree with what Submit sends.
+func BaseFees(c, k int, batch bool) int {
+	if !batch {
+		return c + k + 1
+	}
+	if c+k+1 <= codec.MaxBatchInner {
+		return c + k + 3
+	}
+	fees := 0
+	switch {
+	case c == 1:
+		fees = 1
+	case c > 1:
+		fees = c + 2
+	}
+	for _, g := range splitBatches(k + 1) {
+		if g == 1 {
+			fees++
+		} else {
+			fees += g + 2
+		}
+	}
+	return fees
+}
+
 // splitBatches cuts n inner transactions into batch sizes of at most
 // codec.MaxBatchInner, as even as possible, so that no batch after the
 // first has a single transaction. n is at least 2 here (one part and the
