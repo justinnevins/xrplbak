@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -240,8 +241,10 @@ func (c *Client) AccountInfo(account string) (*xrpl.AccountState, error) {
 	if err := json.Unmarshal(res["account_data"], &data); err != nil {
 		return nil, fmt.Errorf("account_info: bad account_data: %w", err)
 	}
-	var bal uint64
-	fmt.Sscanf(data.Balance, "%d", &bal)
+	bal, err := drops("account_info: Balance", data.Balance)
+	if err != nil {
+		return nil, err
+	}
 	return &xrpl.AccountState{Sequence: data.Sequence, BalanceDrops: bal}, nil
 }
 
@@ -286,15 +289,35 @@ func (c *Client) ServerInfo() (*xrpl.ServerState, error) {
 			OpenLedgerFee string `json:"open_ledger_fee"`
 		}
 		_ = json.Unmarshal(fee["drops"], &d)
-		var v uint64
-		if _, err := fmt.Sscanf(d.OpenLedgerFee, "%d", &v); err == nil && v > 0 {
+		// An absent field is an older server: the base fee applies. A
+		// present field that is not a decimal count of drops is refused,
+		// never read as a prefix ("1e6" is not 1 drop) and never replaced
+		// by a number nobody chose.
+		if d.OpenLedgerFee != "" {
+			v, err := drops("fee: open_ledger_fee", d.OpenLedgerFee)
+			if err != nil {
+				return nil, err
+			}
 			if v > MaxSaneFeeDrops {
 				return nil, fmt.Errorf("fee: open_ledger_fee is %d drops, above the %d drop sanity bound", v, MaxSaneFeeDrops)
 			}
-			st.OpenLedgerFee = v
+			if v > 0 {
+				st.OpenLedgerFee = v
+			}
 		}
 	}
 	return st, nil
+}
+
+// drops parses a rippled drops field: a string holding an unsigned decimal
+// integer and nothing else. Anything else is refused, so that a malformed
+// answer cannot become a fee or a balance the tool then acts on.
+func drops(field, s string) (uint64, error) {
+	v, err := strconv.ParseUint(s, 10, 64)
+	if err != nil || (len(s) > 1 && s[0] == '0') {
+		return 0, fmt.Errorf("%s: %q is not a decimal count of drops", field, s)
+	}
+	return v, nil
 }
 
 // MaxSaneFeeDrops is one XRP. No network has charged a base fee near it, and
@@ -312,9 +335,11 @@ func feeDrops(xrp float64) (uint64, error) {
 	if xrp < 0 {
 		return 0, fmt.Errorf("negative (%g)", xrp)
 	}
-	drops := xrp*1_000_000 + 0.5
-	if drops > MaxSaneFeeDrops {
+	// Round to the nearest drop, then bound: 1.0 XRP is exactly the bound
+	// and is accepted, the same as open_ledger_fee "1000000".
+	d := math.Round(xrp * 1_000_000)
+	if d > MaxSaneFeeDrops {
 		return 0, fmt.Errorf("%g XRP is above the %d drop sanity bound", xrp, MaxSaneFeeDrops)
 	}
-	return uint64(drops), nil
+	return uint64(d), nil
 }
