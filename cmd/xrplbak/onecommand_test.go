@@ -184,7 +184,10 @@ func TestSaveHintOnlyWhenUseful(t *testing.T) {
 		want bool
 	}{
 		{"custom, unsaved", submitExtras{Settings: settings{RPC: "testnet", MaxFee: 100}}, true},
-		{"all defaults", submitExtras{Settings: settings{RPC: "testnet"}}, false},
+		{"nothing to save", submitExtras{}, false},
+		{"comments only", submitExtras{Settings: settings{Comments: "onchain"}}, true},
+		{"peers only", submitExtras{Settings: settings{Peers: "onchain"}}, true},
+		{"default choices", submitExtras{Settings: settings{MaxFee: defaultMaxFee, Comments: "bundle", Peers: "bundle"}}, false},
 		{"already saved", submitExtras{SettingsExist: true, Settings: settings{RPC: "testnet", MaxFee: 100}}, false},
 	} {
 		w := newWorld(t, 47)
@@ -358,5 +361,52 @@ func TestDoneNamesTheFilesToCopy(t *testing.T) {
 		if !strings.Contains(out, sha256hex(raw)+"  "+matches[0]) {
 			t.Errorf("no sha256 line for %s:\n%s", matches[0], out)
 		}
+	}
+}
+
+// TestReadBackRefusesWhenRestoreWouldPickAnother pins that a backup that
+// landed but is not what restore would choose is not a PASS. Here seq 3 is
+// already on the ledger, so a new seq 2 lands below it and restore picks 3.
+func TestReadBackRefusesWhenRestoreWouldPickAnother(t *testing.T) {
+	noSleep(t)
+	w := newWorld(t, 53)
+	w.submit(w.build(3, w.cfgPath, w.valPath))
+	o := backup.Options{ConfigPath: w.cfgPath, ValidatorsPath: w.valPath, Key: w.key, Seq: 2}
+	out, err := captureStdout(t, func() error {
+		return doSubmit(o, w.ledger, "fake", w.writer, t.TempDir(), 0, false, true, "off", "", "", nil, nil, "", "testnet", w.keyFile, submitExtras{ReadBack: true})
+	})
+	if exitCode(err) != exitIncomplete || strings.Contains(out, "PASS") || !strings.Contains(err.Error(), "restore would pick") {
+		t.Fatalf("want exit %d and no PASS, got exit %d (%v)\n%s", exitIncomplete, exitCode(err), err, out)
+	}
+}
+
+// spikyServer reports a fee above the cap for the first high reads.
+type spikyServer struct {
+	*fake.Ledger
+	high, reads int
+}
+
+func (s *spikyServer) ServerInfo() (*xrpl.ServerState, error) {
+	s.reads++
+	s.Ledger.Fee = 10
+	if s.reads <= s.high {
+		s.Ledger.Fee = 5063
+	}
+	return s.Ledger.ServerInfo()
+}
+
+// TestSubmitWaitsOutAFeeSpike pins the wiring: doSubmit hands --fee-wait to
+// the submitter, so the 2026-11-07 spike no longer ends the run.
+func TestSubmitWaitsOutAFeeSpike(t *testing.T) {
+	noSleep(t)
+	w := newWorld(t, 54)
+	w.ledger.Batch = true
+	spiky := &spikyServer{Ledger: w.ledger, high: 2}
+	o := backup.Options{ConfigPath: w.cfgPath, ValidatorsPath: w.valPath, Key: w.key, Seq: 2}
+	out, err := captureStdout(t, func() error {
+		return doSubmit(o, spiky, "fake", w.writer, t.TempDir(), 100, false, true, "auto", "", "", nil, nil, "", "testnet", w.keyFile, submitExtras{FeeWait: 10 * time.Minute})
+	})
+	if err != nil || !strings.Contains(out, "waiting up to 10m0s") {
+		t.Fatalf("a short spike must be waited out: %v\n%s", err, out)
 	}
 }

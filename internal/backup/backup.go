@@ -546,11 +546,43 @@ func (s *Submitter) saveDump() error {
 	return s.Dump.Save(s.DumpOut)
 }
 
+// feeRate reads the network fee per transaction: the open-ledger fee, never
+// below the base fee. While it is above MaxFee it waits, reading it again
+// every FeePoll, for at most FeeWait. Nothing is signed or sent while it
+// waits, so giving up leaves nothing half done on the ledger.
+func (s *Submitter) feeRate() (*xrpl.ServerState, uint64, error) {
+	var waited time.Duration
+	for {
+		st, err := s.Client.ServerInfo()
+		if err != nil {
+			return nil, 0, err
+		}
+		rate := st.OpenLedgerFee
+		if rate < st.BaseFeeDrops {
+			rate = st.BaseFeeDrops
+		}
+		if rate <= s.MaxFee {
+			return st, rate, nil
+		}
+		if waited+FeePoll > s.FeeWait {
+			if waited > 0 {
+				return nil, 0, fmt.Errorf("network fee is %d drops, above the %d drop cap, after waiting %s. Retry later or raise --max-fee", rate, s.MaxFee, waited)
+			}
+			return nil, 0, fmt.Errorf("network fee is %d drops, above the %d drop cap. Retry later or raise --max-fee", rate, s.MaxFee)
+		}
+		if waited == 0 {
+			s.Log("network fee is %d drops, above the %d drop cap; waiting up to %s for it to fall", rate, s.MaxFee, s.FeeWait)
+		}
+		s.Sleep(FeePoll)
+		waited += FeePoll
+	}
+}
+
 // send signs, submits, waits for validation, and records the result.
 func (s *Submitter) send(tx *codec.Tx) (hash string, ledger uint32, err error) {
 	s.defaults()
 	for attempt := 0; attempt < 3; attempt++ {
-		st, err := s.Client.ServerInfo()
+		st, fee, err := s.feeRate()
 		if err != nil {
 			return "", 0, err
 		}
@@ -559,13 +591,6 @@ func (s *Submitter) send(tx *codec.Tx) (hash string, ledger uint32, err error) {
 			return "", 0, fmt.Errorf("account %s does not exist on this network yet. Fund it with at least 1.5 XRP and retry", s.Writer.Address())
 		} else if err != nil {
 			return "", 0, err
-		}
-		fee := st.OpenLedgerFee
-		if fee < st.BaseFeeDrops {
-			fee = st.BaseFeeDrops
-		}
-		if fee > s.MaxFee {
-			return "", 0, fmt.Errorf("network fee is %d drops, above the %d drop cap. Retry later or raise --max-fee", fee, s.MaxFee)
 		}
 		if acct.BalanceDrops < 1_200_000+fee {
 			return "", 0, fmt.Errorf("account %s holds %d drops; it needs the 1.2 XRP reserve plus fees", s.Writer.Address(), acct.BalanceDrops)

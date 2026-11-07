@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `backup --submit` reads the new backup back from the ledger, the way `restore` would: it must be the backup restore picks, every chunk must be there, and every file must rebuild to the bytes it backed up. It prints `read-back: PASS`, or exits 5 when the ledger does not hold a backup that restores. When the read-back cannot finish (the server never shows the backup within a minute), it exits 2 and prints the `verify` command that finishes the check. `--no-readback` skips it. A file that changed on disk during the run gets a warning.
+- `backup --submit` waits out a fee spike. While the network fee is above `--max-fee` it reads the fee again every 15 seconds, for up to `--fee-wait` (default 10m), and signs nothing until the fee is under the cap. `--fee-wait 0` gives up at once, as before.
+- `backup --submit --save` writes `xrplbak.settings` beside the key file (mode 0600) after the backup lands: `--rpc`, `--max-fee`, `--comments` and `--peers`. Later runs use them, so a routine backup is `xrplbak backup --submit`. A flag on the command line wins. A saved on-chain choice is not asked again and is named on its own line. An unknown key or value in the file stops the run with the file named. `--no-settings` ignores the file.
+- `backup --submit` ends by naming the bundle and the dump with their SHA-256, to copy off the host and check.
+
 ## v1.1.6 (2026-11-03)
 
 - Removed: `backup --attestation` and `--attestation-key` (the team attestation inside the encrypted manifest). Only a holder of the recovery words could check it, and `backup` published it without checking the signature. A signature over the wrong string, or over the string a dry run printed for seq 1 when the ledger already held a backup, was stored for good and read as INVALID. Both flags now refuse with exit 1 and point to `--attest`. `verify` still reads team attestations in older backups. Use `--attest` (delegated key) or `--attest-public-key` for a public attestation.

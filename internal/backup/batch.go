@@ -355,7 +355,7 @@ func splitBatches(n int) []int {
 func (s *Submitter) sendBatch(build func(outerSeq uint32) ([]batchItem, error)) ([]xrpl.TxRecord, uint32, error) {
 	s.defaults()
 	for attempt := 0; attempt < 3; attempt++ {
-		st, err := s.Client.ServerInfo()
+		st, rate, err := s.feeRate()
 		if err != nil {
 			return nil, 0, err
 		}
@@ -376,13 +376,6 @@ func (s *Submitter) sendBatch(build func(outerSeq uint32) ([]batchItem, error)) 
 		// batch itself, and each inner transaction's base fee: (n+2) times
 		// the rate. --max-fee caps the rate, as it does for a single
 		// transaction.
-		rate := st.OpenLedgerFee
-		if rate < st.BaseFeeDrops {
-			rate = st.BaseFeeDrops
-		}
-		if rate > s.MaxFee {
-			return nil, 0, fmt.Errorf("network fee is %d drops, above the %d drop cap. Retry later or raise --max-fee", rate, s.MaxFee)
-		}
 		fee := rate * uint64(len(items)+2)
 		if acct.BalanceDrops < 1_200_000+fee {
 			return nil, 0, fmt.Errorf("account %s holds %d drops; it needs the 1.2 XRP reserve plus fees", s.Writer.Address(), acct.BalanceDrops)

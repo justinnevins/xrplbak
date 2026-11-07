@@ -4,10 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/justinnevins/xrplbak/internal/backup"
 	"github.com/justinnevins/xrplbak/internal/cfg"
@@ -95,7 +97,11 @@ func cmdBackup(args []string) error {
 	rpcURL := fs.String("rpc", "", "XRPL JSON-RPC URL, or mainnet / testnet / devnet")
 	submit := fs.Bool("submit", false, "actually submit transactions (default is a dry run). Asks before submitting; pass --yes to answer up front")
 	yes := fs.Bool("yes", false, "answer the submit confirmation with yes, for scripts")
-	maxFee := fs.Uint64("max-fee", 5000, "abort if the network fee per transaction exceeds this many drops")
+	maxFee := fs.Uint64("max-fee", defaultMaxFee, "abort if the network fee per transaction exceeds this many drops")
+	feeWait := fs.Duration("fee-wait", 10*time.Minute, "with --submit: while the network fee is above --max-fee, wait this long for it to fall before giving up (0 gives up at once)")
+	save := fs.Bool("save", false, "with --submit: after the backup lands, save --rpc, --max-fee, --comments and --peers to "+settingsName+" beside the key file, so the next run needs only --submit")
+	noSettings := fs.Bool("no-settings", false, "ignore "+settingsName)
+	noReadBack := fs.Bool("no-readback", false, "with --submit: skip reading the new backup back from the ledger")
 	tombstone := fs.Bool("tombstone", false, "publish a tombstone that marks earlier backups as retired")
 	deleteAnchor := fs.Bool("delete-anchor", false, "with --tombstone only: also delete the DID entry (frees 0.2 XRP)")
 	forceSeq := fs.Bool("force-seq", false, "submit even when existing backups could not be read (risks a duplicate seq)")
@@ -114,13 +120,21 @@ func cmdBackup(args []string) error {
 		return parseError(err)
 	}
 
-	mode, err := commentsMode(*comments, true)
-	if err != nil {
-		return err
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if *feeWait < 0 {
+		return fail(exitUsage, "--fee-wait must be zero or more, not %s", *feeWait)
 	}
-	peersOn, err := peersMode(*peers, true)
-	if err != nil {
-		return err
+	if *save && !*submit {
+		return fail(exitUsage, "--save needs --submit: settings are saved only after a backup lands")
+	}
+	if *save && *noSettings {
+		return fail(exitUsage, "choose one: --save or --no-settings")
+	}
+	for name, v := range map[string]string{"comments": *comments, "peers": *peers} {
+		if v != "bundle" && v != "onchain" {
+			return fail(exitUsage, "--%s must be bundle or onchain, not %q", name, v)
+		}
 	}
 	switch *batch {
 	case "auto", "on", "off":
@@ -166,6 +180,45 @@ func cmdBackup(args []string) error {
 	keyPath, err := findKeyFile(*key, cfgPath)
 	if err != nil {
 		return err
+	}
+	// Saved choices fill in what the command line left out.
+	settingsPath := filepath.Join(filepath.Dir(keyPath), settingsName)
+	saved, settingsExist := &settings{}, false
+	if !*noSettings {
+		if saved, settingsExist, err = loadSettings(settingsPath); err != nil {
+			return fail(exitUsage, "%s: %v. Fix the file, or pass --no-settings to ignore it", settingsPath, err)
+		}
+	}
+	if !set["rpc"] && saved.RPC != "" {
+		*rpcURL = saved.RPC
+	}
+	if !set["max-fee"] && saved.MaxFee != 0 {
+		*maxFee = saved.MaxFee
+	}
+	savedOnchain := map[string]bool{}
+	if !set["comments"] && saved.Comments != "" {
+		*comments = saved.Comments
+		savedOnchain["comments"] = saved.Comments == "onchain"
+	}
+	if !set["peers"] && saved.Peers != "" {
+		*peers = saved.Peers
+		savedOnchain["peers"] = saved.Peers == "onchain"
+	}
+	// An on-chain choice read from the file was typed and acknowledged in
+	// the run that saved it, so it is not asked again. It is named instead.
+	mode, err := commentsMode(*comments, !savedOnchain["comments"])
+	if err != nil {
+		return err
+	}
+	if savedOnchain["comments"] {
+		fmt.Fprintf(stdout, "  comments: on-chain (saved in %s)\n", settingsPath)
+	}
+	peersOn, err := peersMode(*peers, !savedOnchain["peers"])
+	if err != nil {
+		return err
+	}
+	if savedOnchain["peers"] {
+		fmt.Fprintf(stdout, "  peers: on-chain (saved in %s)\n", settingsPath)
 	}
 	kf, err := loadKeyFile(keyPath, *keyPass)
 	if err != nil {
@@ -225,7 +278,9 @@ func cmdBackup(args []string) error {
 			if seqErr != nil && !*forceSeq {
 				return fail(exitNetwork, "could not read existing backups (%v). Fix the server or pass --force-seq to submit as seq 1 anyway", seqErr)
 			}
-			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, *batch, *attestPubKey, *attestPubSig, warns, att, *delegSig, *rpcURL, keyPath, submitExtras{})
+			x := submitExtras{FeeWait: *feeWait, ReadBack: !*noReadBack, Save: *save, SettingsPath: settingsPath, SettingsExist: settingsExist,
+				Settings: settings{RPC: *rpcURL, MaxFee: *maxFee, Comments: *comments, Peers: *peers}}
+			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, *batch, *attestPubKey, *attestPubSig, warns, att, *delegSig, *rpcURL, keyPath, x)
 		}
 	}
 	if att != nil {
@@ -367,7 +422,7 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 		return err
 	}
 	dumpPath := filepath.Join(out, p.Manifest.BackupID+".dump.json")
-	s := &backup.Submitter{Client: client, Writer: writer, Key: o.Key, MaxFee: maxFee, DumpOut: dumpPath, Batch: useBatch, AttestMemo: attestMemo, DelegationMemo: delegMemo, Log: func(f string, a ...any) { fmt.Fprintf(stdout, "  "+f+"\n", a...) }}
+	s := &backup.Submitter{Client: client, Writer: writer, Key: o.Key, MaxFee: maxFee, FeeWait: x.FeeWait, Sleep: submitSleep, DumpOut: dumpPath, Batch: useBatch, AttestMemo: attestMemo, DelegationMemo: delegMemo, Log: func(f string, a ...any) { fmt.Fprintf(stdout, "  "+f+"\n", a...) }}
 	if prev, err := dump.Load(dumpPath); err == nil && prev.BackupID == p.Manifest.BackupID {
 		s.Dump = prev
 		fmt.Fprintf(stdout, "  resuming from %s (%d transaction(s) already validated)\n", dumpPath, len(prev.Txs))
@@ -407,6 +462,44 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 		tip += " --bundle " + filepath.Join(out, p.Manifest.BackupID+".bundle")
 	}
 	fmt.Fprintln(stdout, "  verify anytime: "+tip)
+	if !p.Manifest.Tombstone {
+		// The bundle is the only copy of what stays off the ledger, the
+		// validator token among it. A host that dies with it takes it along.
+		fmt.Fprintln(stdout, "  copy both files off this host now, then check each copy's sha256:")
+		for _, f := range []string{filepath.Join(out, p.Manifest.BackupID+".bundle"), dumpPath} {
+			abs, err := filepath.Abs(f)
+			if err != nil {
+				return err
+			}
+			raw, err := os.ReadFile(abs)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "    %s  %s\n", sha256hex(raw), abs)
+		}
+	}
+	if x.ReadBack && !p.Manifest.Tombstone {
+		hr("Read-back")
+		n, err := readBack(client, o.Key, writer.Address(), p)
+		if err != nil {
+			var ee *exitError
+			if errors.As(err, &ee) && ee.code == exitNetwork {
+				return fail(exitNetwork, "the backup was submitted, but the read-back could not finish: %v. Finish the check with: %s", err, tip)
+			}
+			return err
+		}
+		fmt.Fprintf(stdout, "  read-back: PASS, %d file(s) byte-identical to what was backed up\n", n)
+		warnChangedFiles(p)
+	}
+	switch {
+	case x.Save:
+		if err := saveSettings(x.SettingsPath, x.Settings); err != nil {
+			return fail(exitWrite, "the backup landed, but %s could not be saved: %v", x.SettingsPath, err)
+		}
+		fmt.Fprintf(stdout, "  settings saved: %s. Next time, run: xrplbak backup --submit\n", x.SettingsPath)
+	case !x.SettingsExist && x.Settings.customized():
+		fmt.Fprintln(stdout, "  next time:      add --save to remember --rpc, --max-fee, --comments and --peers")
+	}
 	return nil
 }
 
