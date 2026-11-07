@@ -342,14 +342,20 @@ type landed struct {
 	total uint16
 }
 
+// FeePoll is how often a fee above the cap is read again.
+const FeePoll = 15 * time.Second
+
 // Submitter carries what Submit needs beyond the plan.
 type Submitter struct {
-	Client  xrpl.Client
-	Writer  *sign.Key
-	Key     *crypto.KeyFile
-	Log     func(string, ...any)
-	Sleep   func(time.Duration)
-	MaxFee  uint64
+	Client xrpl.Client
+	Writer *sign.Key
+	Key    *crypto.KeyFile
+	Log    func(string, ...any)
+	Sleep  func(time.Duration)
+	MaxFee uint64
+	// FeeWait is how long to wait, re-reading the network fee every
+	// FeePoll, while it is above MaxFee. Zero refuses at once.
+	FeeWait time.Duration
 	Dump    *dump.Dump // filled in as transactions validate
 	DumpOut string     // path to write the dump after every step
 	// Batch wraps the transactions in XLS-56 Batch transactions

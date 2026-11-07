@@ -225,7 +225,7 @@ func cmdBackup(args []string) error {
 			if seqErr != nil && !*forceSeq {
 				return fail(exitNetwork, "could not read existing backups (%v). Fix the server or pass --force-seq to submit as seq 1 anyway", seqErr)
 			}
-			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, *batch, *attestPubKey, *attestPubSig, warns, att, *delegSig, *rpcURL, keyPath)
+			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, *batch, *attestPubKey, *attestPubSig, warns, att, *delegSig, *rpcURL, keyPath, submitExtras{})
 		}
 	}
 	if att != nil {
@@ -313,7 +313,7 @@ func writeBundle(p *backup.Plan, out string) error {
 	return nil
 }
 
-func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor, yes bool, batch, attestPubKey, attestPubSig string, warns []string, att *attestKey, delegSig, rpcArg, keyPath string) error {
+func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.Key, out string, maxFee uint64, deleteAnchor, yes bool, batch, attestPubKey, attestPubSig string, warns []string, att *attestKey, delegSig, rpcArg, keyPath string, x submitExtras) error {
 	if o.Tombstone && (attestPubKey != "" || attestPubSig != "" || att != nil || o.AttestPublicVPK != "") {
 		return fail(exitUsage, "a tombstone carries no attestation; drop --attest and --attest-public-key")
 	}
