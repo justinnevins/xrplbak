@@ -100,7 +100,7 @@ func parseSettings(text string) (*settings, error) {
 // loadSettings reads the file at path. A missing file is no settings, not
 // an error. Any other problem is an error.
 func loadSettings(path string) (*settings, bool, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(filepath.Clean(path))
 	if errors.Is(err, os.ErrNotExist) {
 		return &settings{}, false, nil
 	}

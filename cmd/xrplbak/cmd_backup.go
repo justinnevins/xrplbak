@@ -471,7 +471,7 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 			if err != nil {
 				return err
 			}
-			raw, err := os.ReadFile(abs)
+			raw, err := os.ReadFile(filepath.Clean(abs))
 			if err != nil {
 				return err
 			}
