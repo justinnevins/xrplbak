@@ -55,7 +55,7 @@ func TestSubmitSaysWhatItPublished(t *testing.T) {
 	defer func() { stdout = old }()
 	o := backup.Options{ConfigPath: w.cfgPath, ValidatorsPath: w.valPath, Key: w.key, Seq: 2}
 	out := t.TempDir()
-	if err := doSubmit(o, w.ledger, "https://example.test:51234", w.writer, out, 0, false, true, "auto", "", "", nil, k, sig, "testnet", w.keyFile); err != nil {
+	if err := doSubmit(o, w.ledger, "https://example.test:51234", w.writer, out, 0, false, true, "auto", "", "", nil, k, sig, "testnet", w.keyFile, submitExtras{}); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()

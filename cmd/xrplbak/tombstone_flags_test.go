@@ -58,7 +58,7 @@ func TestTombstoneSubmitRefusesPublicAttestation(t *testing.T) {
 	must(t, err)
 	sig := ed25519Hex(priv, p.AttestPublicText)
 	before := len(w.ledger.Txs)
-	err = doSubmit(o, w.ledger, "fake", w.writer, t.TempDir(), 0, false, true, "off", vpk, sig, nil, nil, "", "", "")
+	err = doSubmit(o, w.ledger, "fake", w.writer, t.TempDir(), 0, false, true, "off", vpk, sig, nil, nil, "", "", "", submitExtras{})
 	if err == nil || len(w.ledger.Txs) != before {
 		t.Fatalf("a tombstone with a public attestation must be refused before anything is sent (err %v, %d new tx)", err, len(w.ledger.Txs)-before)
 	}
@@ -70,7 +70,7 @@ func TestDeleteAnchorUpdatesDump(t *testing.T) {
 	w := newWorld(t, 95)
 	out := t.TempDir()
 	o := backup.Options{ConfigPath: w.cfgPath, ValidatorsPath: w.valPath, Key: w.key, Seq: 2, Supersedes: w.plan.Manifest.BackupID, Tombstone: true}
-	must(t, doSubmit(o, w.ledger, "fake", w.writer, out, 0, true, true, "off", "", "", nil, nil, "", "", ""))
+	must(t, doSubmit(o, w.ledger, "fake", w.writer, out, 0, true, true, "off", "", "", nil, nil, "", "", "", submitExtras{}))
 	if _, ok := w.ledger.DID[w.writer.Address()]; ok {
 		t.Fatal("the ledger still has the DID")
 	}

@@ -55,7 +55,13 @@ xrplbak backup --submit --rpc mainnet
 
 Keep the bundle file (`xrplbak-out/<id>.bundle`) somewhere other than the validator. The dump file beside it lets you restore without a server.
 
-Back up again after you change the config. Validator configs change rarely, so a manual backup after each change is the normal pattern.
+`--submit` reads the new backup back from the ledger and prints `read-back: PASS` when every file rebuilds to the bytes it backed up. It waits up to 10 minutes (`--fee-wait`) when the network fee is above `--max-fee`, and sends nothing while it waits.
+
+Back up again after you change the config. Validator configs change rarely, so a manual backup after each change is the normal pattern. Add `--save` once to keep `--rpc`, `--max-fee`, `--comments` and `--peers` in `xrplbak.settings` beside the key file. After that a routine backup is:
+
+```
+xrplbak backup --submit           # then copy the two files it names off the host
+```
 
 ## Usage
 
