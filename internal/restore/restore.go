@@ -267,7 +267,20 @@ func (p *Plan) WriteTarget(targetDir string, force bool) ([]string, error) {
 		}
 		seen[base] = f.Path
 		dst := filepath.Join(abs, base)
-		if _, err := os.Lstat(dst); err == nil && !force {
+		st, err := os.Lstat(dst)
+		if err != nil {
+			continue
+		}
+		// A symlink is refused with or without --force: the write would
+		// land on whatever it points at, outside the target directory.
+		// backup refuses to read through one for the same reason.
+		if st.Mode()&os.ModeSymlink != 0 {
+			return written, fmt.Errorf("%s is a symlink; restore into the directory of the real file, or remove the link", dst)
+		}
+		if !st.Mode().IsRegular() {
+			return written, fmt.Errorf("%s exists and is not a regular file", dst)
+		}
+		if !force {
 			return written, fmt.Errorf("%s exists; pass --force to overwrite", dst)
 		}
 	}
@@ -318,5 +331,29 @@ func writeFile(dst string, f File) error {
 	if mode == 0 {
 		mode = 0o600
 	}
-	return os.WriteFile(dst, f.Data, mode)
+	// Write beside the destination and rename over it. Writing in place
+	// kept the mode of a file that was already there, whatever the backup
+	// recorded, followed a symlink, and left a half-written config behind
+	// if the write failed. The new file is private until it is whole, then
+	// takes exactly the backed-up mode.
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".xrplbak-restore-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	_, err = tmp.Write(f.Data)
+	if err == nil {
+		err = tmp.Chmod(mode)
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(name, dst)
+	}
+	if err != nil {
+		os.Remove(name)
+		return err
+	}
+	return nil
 }

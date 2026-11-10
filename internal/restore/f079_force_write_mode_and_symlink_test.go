@@ -96,3 +96,39 @@ func TestF079RefusesASymlinkAtTheDestination(t *testing.T) {
 		}
 	}
 }
+
+// A destination that is a directory is refused by name, with or without
+// --force, before anything is written.
+func TestF079RefusesADestinationThatIsNotAFile(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		dir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(dir, "xrpld.cfg"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		p := &Plan{Files: []File{{Path: "/etc/xrpld/xrpld.cfg", Mode: 0o600, Data: []byte("new\n")}}}
+		if _, err := p.WriteTarget(dir, force); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("force=%v: want the refusal, got %v", force, err)
+		}
+	}
+}
+
+// A write that cannot finish reports the error and leaves no temporary
+// file beside the destination.
+func TestF079FailedWriteReportsAndCleansUp(t *testing.T) {
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "xrpld.cfg")
+	if err := os.MkdirAll(filepath.Join(blocked, "inner"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(blocked, File{Path: "/etc/xrpld/xrpld.cfg", Mode: 0o600, Data: []byte("new\n")}); err == nil {
+		t.Fatal("writeFile over a non-empty directory returned no error")
+	}
+	ents, _ := os.ReadDir(dir)
+	if len(ents) != 1 || ents[0].Name() != "xrpld.cfg" {
+		var names []string
+		for _, e := range ents {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("a failed write left files behind: %v", names)
+	}
+}
