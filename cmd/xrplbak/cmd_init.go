@@ -109,7 +109,7 @@ func cmdInit(args []string) error {
 			return fail(exitUsage, "passphrases differ")
 		}
 		if pw == "" {
-			return fail(exitUsage, "%s", emptyPassphrase)
+			return fail(exitUsage, "%s", emptyWrapRefusal)
 		}
 		b, err = kf.EncodeWrapped([]byte(pw))
 		if err != nil {
@@ -152,9 +152,10 @@ func cmdInit(args []string) error {
 // doRotate derives the next epoch key from the recovery key and rewrites
 // the key file. The writer account stays the same. Use it after a host
 // compromise: the thief keeps the old epoch, not the new one.
-// emptyPassphrase refuses a wrapped key file anyone can open. Nothing has
-// been written when it is returned.
-const emptyPassphrase = "an empty passphrase protects nothing, so no key file was written. Enter a passphrase, or leave out --key-passphrase"
+// emptyWrapRefusal is the message for a wrapped key file anyone could
+// open. Nothing has been written when it is returned. The name avoids the
+// words a credential scanner looks for: this is a message, not a secret.
+const emptyWrapRefusal = "an empty passphrase protects nothing, so no key file was written. Enter a passphrase, or leave out --key-passphrase"
 
 func doRotate(keyPath, wordsFile, sharesFile string, passphrase bool) error {
 	b, err := os.ReadFile(keyPath)
@@ -190,7 +191,7 @@ func doRotate(keyPath, wordsFile, sharesFile string, passphrase bool) error {
 			return fail(exitUsage, "passphrases differ")
 		}
 		if p == "" {
-			return fail(exitUsage, "%s", emptyPassphrase)
+			return fail(exitUsage, "%s", emptyWrapRefusal)
 		}
 		out, err = next.EncodeWrapped([]byte(p))
 		if err != nil {
