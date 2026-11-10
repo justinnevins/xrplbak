@@ -201,6 +201,13 @@ type Finding struct {
 	DelegLedger uint32
 	// Reason says why an attestation is Invalid.
 	Reason string
+	// NewerInvalid counts attestation memos that landed after a Valid
+	// answer and do not verify. NewerLedger and NewerReason describe the
+	// newest of them. Anyone holding the writer seed can post such a memo;
+	// it is reported, and it does not undo the valid attestation.
+	NewerInvalid int
+	NewerLedger  uint32
+	NewerReason  string
 }
 
 type placed struct {

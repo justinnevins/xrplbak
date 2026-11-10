@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/justinnevins/xrplbak/internal/backup"
 	"github.com/justinnevins/xrplbak/internal/cfg"
@@ -421,6 +422,9 @@ func moveLine(m redact.Move) string {
 }
 
 // reportRun prints discovery output shared by verify and restore.
+// backupAge renders a manifest's created time for the operator.
+func backupAge(created string, now time.Time) string { return created }
+
 func reportRun(res *discover.Result, source string) {
 	hr("Discovery")
 	fmt.Fprintf(stdout, "  source:   %s\n", source)
