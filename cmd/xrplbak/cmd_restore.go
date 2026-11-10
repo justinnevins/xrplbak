@@ -218,17 +218,44 @@ func cmdVerify(args []string) error {
 		}
 		return fail(exitIncomplete, "the newest backup is a tombstone: the operator retired these backups. Pass --backup-id to verify an older one")
 	}
+	var bundle []container.Entry
 	if *bundlePath != "" {
 		b, err := os.ReadFile(*bundlePath)
 		if err != nil {
 			return err
 		}
-		if _, err := discover.OpenBundle(s.keys, latest, b); err != nil {
+		if bundle, err = discover.OpenBundle(s.keys, latest, b); err != nil {
 			return fail(exitAuth, "bundle: %v", err)
 		}
 		fmt.Fprintln(stdout, "  bundle:        matches the manifest and decrypts")
 	} else {
 		fmt.Fprintf(stdout, "  bundle:        not checked (pass --bundle FILE); expected sha256 %s\n", prefix(latest.Manifest.Bundle.CipherSHA256, 16))
+	}
+	// verify must not pass a backup that restore would refuse, so it runs
+	// the build restore runs: every path checked, every entry listed, and
+	// with the bundle every file compared to the bytes the manifest names.
+	plan, err := restore.Build(latest.Manifest, entries, bundle)
+	if err != nil {
+		return fail(exitRefused, "%v", err)
+	}
+	where := map[string]string{}
+	for _, mf := range latest.Manifest.Files {
+		where[mf.Path] = mf.Where
+	}
+	for _, f := range plan.Files {
+		// Without the bundle only a file stored wholly on-chain can be
+		// compared; the others wait for their moved lines.
+		if (*bundlePath != "" || where[f.Path] == "onchain") && !f.Complete() {
+			return fail(exitIncomplete, "restore check: %s does not rebuild to the backed-up bytes", f.Path)
+		}
+	}
+	if *bundlePath == "" {
+		fmt.Fprintln(stdout, "  restore check: restore accepts this backup; pass --bundle FILE to check every byte")
+	} else {
+		if len(plan.Files) != len(latest.Manifest.Files) {
+			return fail(exitIncomplete, "restore check: %d file(s) rebuild, the backup has %d", len(plan.Files), len(latest.Manifest.Files))
+		}
+		fmt.Fprintf(stdout, "  restore check: every file rebuilds to its backed-up bytes (%d file(s))\n", len(plan.Files))
 	}
 	if *asJSON {
 		fmt.Fprintln(stdout, string(latest.Plain))

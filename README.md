@@ -151,7 +151,7 @@ xrplbak backup                            # comments go in the off-chain bundle 
 xrplbak backup --comments=onchain         # comments go in the on-chain ciphertext too
 ```
 
-`--comments=onchain` asks you to type an acknowledgment first, because those bytes are permanent on a public ledger and anyone who ever gets the backup key can read them. In both modes the redaction scanners read every comment, so a comment holding a key, a private address or an internal hostname moves to the bundle regardless.
+`--comments=onchain` asks you to type an acknowledgment first, because those bytes are permanent on a public ledger and anyone who ever gets the backup key can read them. In both modes the redaction scanners read every comment, so a comment holding a key, a private address or an internal hostname moves to the bundle regardless. A comment also stays on-chain only where a setting with the same text would: every comment under `[validator_token]`, `[cluster_nodes]` or any other stanza that stays off-chain moves to the bundle, and so does a commented-out `password` or `ssl_key` line in a port stanza. A comment above the first stanza has no stanza to take a rule from, so the scanners alone judge it.
 
 ## Security
 

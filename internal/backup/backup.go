@@ -384,19 +384,41 @@ func (s *Submitter) anchorMemos() []codec.Memo {
 	return out
 }
 
-// onLedger reports whether the ledger being written to holds hash as a
-// validated, successful transaction sent by the writer account. Not found
-// is a plain no. Any other answer is unknown, and unknown is an error: an
-// unreachable ledger is never a reason to guess.
-func (s *Submitter) onLedger(hash string) (bool, error) {
+// onLedger returns the record the ledger being written to holds for hash,
+// when that is a validated, successful transaction sent by the writer
+// account, and nil when it is not. Not found is a plain no. Any other
+// answer is unknown, and unknown is an error: an unreachable ledger is
+// never a reason to guess.
+func (s *Submitter) onLedger(hash string) (*xrpl.TxRecord, error) {
 	rec, err := s.Client.Tx(hash)
 	if errors.Is(err, xrpl.ErrNotFound) {
-		return false, nil
+		return nil, nil
 	}
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return rec.Validated && rec.Result == "tesSUCCESS" && rec.Account == s.Writer.Address(), nil
+	if !rec.Validated || rec.Result != "tesSUCCESS" || rec.Account != s.Writer.Address() {
+		return nil, nil
+	}
+	return rec, nil
+}
+
+// completeManifest reports whether parts hold a whole manifest: every part
+// from 0 to total-1, all naming the same total. It returns part 0, which
+// the anchor names. Counting parts is not enough; part 0 of 2 and part 5
+// of 6 are two parts and no manifest.
+func completeManifest(parts map[uint16]landed) (landed, bool) {
+	first, ok := parts[0]
+	if !ok || int(first.total) != len(parts) {
+		return landed{}, false
+	}
+	for i := uint16(0); i < first.total; i++ {
+		p, ok := parts[i]
+		if !ok || p.total != first.total {
+			return landed{}, false
+		}
+	}
+	return first, true
 }
 
 // Submit sends chunks, then the manifest, then the anchor. Each step waits
@@ -409,10 +431,12 @@ func (s *Submitter) Submit(p *Plan) error {
 	}
 	// Resume: match chunk ciphertext hashes to already-recorded transactions,
 	// and collect manifest parts already on the ledger, grouped by nonce.
-	// The dump only says what landed somewhere, so each transaction it
-	// records for this backup is confirmed on the ledger being written to
-	// before it counts. A dump carried to another network, or written
-	// before a reset, would otherwise skip chunks that ledger never saw.
+	// The dump only says which transactions to ask about. Each one it
+	// records for this backup is read back from the ledger being written
+	// to, and what it carries is taken from the ledger's answer, never from
+	// the dump. A dump carried to another network, written before a reset,
+	// or edited to pair a real hash with another memo would otherwise skip
+	// chunks that ledger never saw.
 	recorded := map[string]dump.Tx{}
 	manifestParts := map[[crypto.ManifestNonceLen]byte]map[uint16]landed{}
 	for _, t := range s.Dump.Txs {
@@ -420,26 +444,31 @@ func (s *Submitter) Submit(p *Plan) error {
 		if err != nil {
 			continue
 		}
-		confirmed := false
-		checked := false
+		ours := false
 		for _, m := range rec.Memos {
+			if pl, ok := chunk.Decode(m); ok && pl.BackupID == [16]byte(p.BackupID) {
+				ours = true
+				break
+			}
+		}
+		if !ours {
+			continue
+		}
+		held, err := s.onLedger(t.Hash)
+		if err != nil {
+			return fmt.Errorf("resume: cannot confirm recorded tx %s on the ledger: %w", t.Hash, err)
+		}
+		if held == nil {
+			s.Log("recorded tx %s is not on this ledger; resending", t.Hash)
+			continue
+		}
+		credited := false
+		for _, m := range held.Memos {
 			pl, ok := chunk.Decode(m)
 			if !ok || pl.BackupID != [16]byte(p.BackupID) {
 				continue
 			}
-			if !checked {
-				checked = true
-				confirmed, err = s.onLedger(t.Hash)
-				if err != nil {
-					return fmt.Errorf("resume: cannot confirm recorded tx %s on the ledger: %w", t.Hash, err)
-				}
-				if !confirmed {
-					s.Log("recorded tx %s is not on this ledger; resending", t.Hash)
-				}
-			}
-			if !confirmed {
-				continue
-			}
+			credited = true
 			if pl.Type == chunk.TypeChunk {
 				sum := sha256.Sum256(pl.Ciphertext)
 				recorded[hex.EncodeToString(sum[:])] = t
@@ -449,6 +478,9 @@ func (s *Submitter) Submit(p *Plan) error {
 				}
 				manifestParts[pl.Nonce][pl.Index] = landed{tx: t, total: pl.Total}
 			}
+		}
+		if !credited {
+			s.Log("recorded tx %s does not carry this backup's data on the ledger; resending", t.Hash)
 		}
 	}
 
@@ -475,7 +507,7 @@ func (s *Submitter) Submit(p *Plan) error {
 	// A complete manifest already on the ledger is reused as is. A partial
 	// one is abandoned: re-sealing it would reuse its nonce.
 	for _, parts := range manifestParts {
-		if first, ok := parts[0]; ok && int(first.total) == len(parts) {
+		if first, ok := completeManifest(parts); ok {
 			manifestHash, manifestLedger = first.tx.Hash, first.tx.LedgerIndex
 			s.Log("manifest already on ledger (tx %s)", manifestHash)
 			break

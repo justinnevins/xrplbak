@@ -225,6 +225,10 @@ func Split(f *cfg.File, opt Options) (*Result, error) {
 				move(l, MovedMarker, why)
 				continue
 			}
+			if why := commentReason(l.Stanza, l.Raw, opt); why != "" {
+				move(l, MovedMarker, why)
+				continue
+			}
 			keep(l)
 		case cfg.Value:
 			if why := valueReasonOpt(l.Stanza, l.Value, opt); why != "" {
@@ -244,12 +248,35 @@ func Split(f *cfg.File, opt Options) (*Result, error) {
 				move(l, CommentMarker, why)
 				continue
 			}
+			if why := commentReason(l.Stanza, l.Comment, opt); why != "" {
+				move(l, CommentMarker, why)
+				continue
+			}
 			keep(l)
 		}
 	}
 	res.OnChain.Stanzas = cfg.Parse(res.OnChain.Render()).Stanzas
 	res.Bundle.Stanzas = cfg.Parse(res.Bundle.Render()).Stanzas
 	return res, nil
+}
+
+// commentReason applies the rules for a setting to a comment that is about
+// to stay on-chain: a comment stays only where a setting line with the
+// same text would. Without it a commented-out setting stayed on-chain in
+// exactly the place the live one moves from: an old token under
+// [validator_token], "#password = x" in a port stanza, a node key under
+// [cluster_nodes]. A comment above the first stanza has no stanza to take
+// a rule from; the line scanners, which the caller has already run, are
+// all that judge it.
+func commentReason(stanza, comment string, opt Options) string {
+	if stanza == "" {
+		return ""
+	}
+	text := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(comment), "#"))
+	if why := valueReasonOpt(stanza, text, opt); why != "" {
+		return "comment where a setting would move: " + why
+	}
+	return ""
 }
 
 // refuse stops the run on content xrplbak must never handle. It reads every
