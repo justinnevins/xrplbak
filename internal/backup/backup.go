@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/justinnevins/xrplbak/internal/anchor"
 	"github.com/justinnevins/xrplbak/internal/cfg"
 	"github.com/justinnevins/xrplbak/internal/chunk"
 	"github.com/justinnevins/xrplbak/internal/container"
@@ -499,11 +498,10 @@ func (s *Submitter) Submit(p *Plan) error {
 		}
 	}
 
-	rec := &anchor.Record{ManifestLedger: manifestLedger, Epoch: m.Epoch, Seq: m.Seq}
-	copy(rec.BackupID[:], p.BackupID)
-	hb, _ := hex.DecodeString(manifestHash)
-	copy(rec.ManifestTxHash[:], hb)
-	data := anchor.Encode(s.Key.Key, rec)
+	data, err := s.anchorData(p, m, manifestHash, manifestLedger)
+	if err != nil {
+		return err
+	}
 	s.Log("submitting DID anchor")
 	_, ledger, err := s.send(&codec.Tx{Type: codec.TxDIDSet, Data: data, Memos: s.anchorMemos()})
 	if err != nil {

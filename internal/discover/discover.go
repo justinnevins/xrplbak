@@ -449,7 +449,12 @@ func Fetch(c xrpl.Client, keys Keys, res *Result, cand *Candidate) ([]container.
 		if errors.Is(err, xrpl.ErrNotFound) {
 			if scanned == nil {
 				scanned = map[string]xrpl.TxRecord{}
-				txs, _, _ := c.AccountTx(res.Account)
+				// A scan that failed is a network failure, not a missing
+				// chunk: the two send the operator to different fixes.
+				txs, _, err := c.AccountTx(res.Account)
+				if err != nil {
+					return nil, &NetworkError{Op: "scan the account for chunk " + fmt.Sprint(ch.Index+1), Err: err}
+				}
 				for _, t := range txs {
 					scanned[strings.ToUpper(t.Hash)] = t
 				}

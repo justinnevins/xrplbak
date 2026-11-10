@@ -86,6 +86,15 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, erro
 			return nil, fmt.Errorf("refused: the backup carries %q, which is not listed in the manifest", e.Path)
 		}
 	}
+	for _, set := range [][]container.Entry{onchain, bundle} {
+		seen := map[string]bool{}
+		for _, e := range set {
+			if seen[e.Path] {
+				return nil, fmt.Errorf("refused: the backup carries %q more than once in one container; restoring it could write content that matches no file", e.Path)
+			}
+			seen[e.Path] = true
+		}
+	}
 	byPath := map[string]*File{}
 	bundleByPath := map[string]container.Entry{}
 	for _, e := range bundle {

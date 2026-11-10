@@ -39,6 +39,17 @@ const (
 	MaxManifestParts = 16
 )
 
+// maxCiphertext is the largest ciphertext one memo carries: one padded
+// block plus the tag for a chunk, one manifest part plus the tag for a
+// manifest. Encode and Decode share it so neither accepts what the other
+// refuses.
+func maxCiphertext(typ string) int {
+	if typ == TypeManifest {
+		return ManifestPartLen + crypto.TagLen
+	}
+	return container.BlockLen + crypto.TagLen
+}
+
 // Payload is a decoded memo.
 type Payload struct {
 	Type       string
@@ -57,6 +68,9 @@ func Encode(typ string, backupID []byte, idx, total uint16, nonce, ct []byte) (c
 	}
 	if (typ == TypeManifest) != (len(nonce) == crypto.ManifestNonceLen) {
 		return codec.Memo{}, errors.New("manifest parts carry a 10-byte nonce, chunks carry none")
+	}
+	if len(ct) > maxCiphertext(typ) {
+		return codec.Memo{}, fmt.Errorf("ciphertext of %d bytes exceeds the %d a %s memo carries", len(ct), maxCiphertext(typ), typ)
 	}
 	data := make([]byte, 0, headerLen+len(nonce)+len(ct))
 	data = append(data, Version)
@@ -92,6 +106,10 @@ func Decode(m codec.Memo) (Payload, bool) {
 		}
 		copy(p.Nonce[:], rest[:crypto.ManifestNonceLen])
 		rest = rest[crypto.ManifestNonceLen:]
+	}
+	// A larger memo is not ours, whatever a server or a dump file says.
+	if len(rest) > maxCiphertext(typ) {
+		return Payload{}, false
 	}
 	if p.Total == 0 || p.Index >= p.Total {
 		return Payload{}, false

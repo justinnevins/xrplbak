@@ -6,6 +6,11 @@
 - `backup --submit` waits out a fee spike. While the network fee is above `--max-fee` it reads the fee again every 15 seconds, for up to `--fee-wait` (default 10m), and signs nothing until the fee is under the cap. `--fee-wait 0` gives up at once, as before.
 - `backup --submit --save` writes `xrplbak.settings` beside the key file (mode 0600) after the backup lands: `--rpc`, `--max-fee`, `--comments` and `--peers`. Later runs use them, so a routine backup is `xrplbak backup --submit`. A flag on the command line wins. A saved on-chain choice is not asked again and is named on its own line. An unknown key or value in the file stops the run with the file named. `--no-settings` ignores the file.
 - `backup --submit` ends by naming the bundle and the dump with their SHA-256, to copy off the host and check.
+- Fix: `verify` and `restore` could report a network failure as a missing chunk. When a server answered "not found" for a chunk and then failed the account scan that follows, the tool exited 5 and said to use a server with more history. It now exits 2 and names the failed call.
+- Fix: a memo larger than the tool ever writes (976 ciphertext bytes for a chunk, 960 for a manifest part) is no longer read as a backup memo. A server or a dump file could hand over memos of any size and the tool kept and tried to open each one. `backup` refuses to write one over the same limit.
+- Fix: an `account_tx` answer without `ledger_index_min` or `ledger_index_max` as numbers is refused (exit 2). It was read as ledger 0, so messages said "searched ledgers 0 to N" for a range no server searched. rippled and Clio always send both.
+- Fix: `restore` refuses a backup whose on-chain container or bundle carries one path twice. It kept the last entry without saying so. `backup` never writes that; only someone holding the epoch key could. The manifest hash still decided `complete` either way.
+- Fix: every DID anchor is now built in one place that checks the manifest transaction hash is 32 bytes of hex. Two of the three places that built an anchor skipped that check and would have published an anchor naming transaction 000...0. No way to reach that from the command line was found.
 
 ## v1.1.6 (2026-11-03)
 
