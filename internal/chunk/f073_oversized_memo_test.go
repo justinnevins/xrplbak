@@ -50,3 +50,34 @@ func TestF073DecodeRefusesAMemoLargerThanTheToolWrites(t *testing.T) {
 		}
 	}
 }
+
+// The writer holds the same line as the reader. Before F-073's fix Encode
+// accepted a chunk ciphertext up to the memo size limit, a few bytes past
+// 976, which Decode would now refuse (FuzzEncodeDecodeRoundTrip found it;
+// the input is in testdata).
+func TestF073EncodeRefusesWhatDecodeRefuses(t *testing.T) {
+	id := make([]byte, 16)
+	nonce := make([]byte, crypto.ManifestNonceLen)
+	for _, c := range []struct {
+		typ   string
+		nonce []byte
+		ct    int
+		ok    bool
+	}{
+		{TypeChunk, nil, container.BlockLen + crypto.TagLen, true},
+		{TypeChunk, nil, container.BlockLen + crypto.TagLen + 1, false},
+		{TypeManifest, nonce, ManifestPartLen + crypto.TagLen, true},
+		{TypeManifest, nonce, ManifestPartLen + crypto.TagLen + 1, false},
+	} {
+		m, err := Encode(c.typ, id, 0, 1, c.nonce, make([]byte, c.ct))
+		if (err == nil) != c.ok {
+			t.Errorf("%s with %d ciphertext bytes: Encode err=%v, want ok=%v", c.typ, c.ct, err, c.ok)
+			continue
+		}
+		if err == nil {
+			if _, ok := Decode(m); !ok {
+				t.Errorf("%s with %d ciphertext bytes: Encode wrote a memo Decode refuses", c.typ, c.ct)
+			}
+		}
+	}
+}

@@ -136,6 +136,16 @@ func (c *Client) Tx(hash string) (*xrpl.TxRecord, error) {
 	return rec, nil
 }
 
+// ledgerBound reads one end of the range an account_tx answer says it
+// searched. rippled and Clio always send both ends as numbers.
+func ledgerBound(res map[string]json.RawMessage, field string) (int64, error) {
+	var v *int64
+	if err := json.Unmarshal(res[field], &v); err != nil || v == nil {
+		return 0, fmt.Errorf("account_tx: the answer has no usable %s, so the range the server searched is unknown; use another server", field)
+	}
+	return *v, nil
+}
+
 // maxAccountTxPages bounds a misbehaving server: 5000 pages of 200 is one
 // million transactions, far beyond any writer account.
 const maxAccountTxPages = 5000
@@ -157,9 +167,16 @@ func (c *Client) AccountTx(account string) ([]xrpl.TxRecord, xrpl.Range, error) 
 		if err != nil {
 			return nil, rng, err
 		}
-		var lo, hi int64
-		_ = json.Unmarshal(res["ledger_index_min"], &lo)
-		_ = json.Unmarshal(res["ledger_index_max"], &hi)
+		// Every message about a missing backup names the range the server
+		// searched, so an answer without one is refused, not read as 0.
+		lo, err := ledgerBound(res, "ledger_index_min")
+		if err != nil {
+			return nil, rng, err
+		}
+		hi, err := ledgerBound(res, "ledger_index_max")
+		if err != nil {
+			return nil, rng, err
+		}
 		if rng.Min < 0 || lo < rng.Min {
 			rng.Min = lo
 		}
