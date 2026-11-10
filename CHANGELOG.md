@@ -10,6 +10,7 @@
 - Fix: a memo larger than the tool ever writes (976 ciphertext bytes for a chunk, 960 for a manifest part) is no longer read as a backup memo. A server or a dump file could hand over memos of any size and the tool kept and tried to open each one. `backup` refuses to write one over the same limit.
 - Fix: an `account_tx` answer without `ledger_index_min` or `ledger_index_max` as numbers is refused (exit 2). It was read as ledger 0, so messages said "searched ledgers 0 to N" for a range no server searched. rippled and Clio always send both.
 - Fix: `restore` refuses a backup whose on-chain container or bundle carries one path twice. It kept the last entry without saying so. `backup` never writes that; only someone holding the epoch key could. The manifest hash still decided `complete` either way.
+- Fix: every DID anchor is now built in one place that checks the manifest transaction hash is 32 bytes of hex. Two of the three places that built an anchor skipped that check and would have published an anchor naming transaction 000...0. No way to reach that from the command line was found.
 
 ## v1.1.6 (2026-11-03)
 

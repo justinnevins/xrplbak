@@ -168,6 +168,70 @@ func TestResumeBatchedRefusesAManifestWithoutItsChunks(t *testing.T) {
 	}
 }
 
+// The dump shows the first part of a two-part manifest and not the second.
+// A partial manifest is abandoned, never anchored, on both submit paths:
+// the resume seals a new one and the anchor names that. An anchor on the old first part would
+// point restore at a manifest that can never be read.
+func TestResumeAbandonsAPartialManifest(t *testing.T) {
+	for name, batch := range map[string]bool{"batched": true, "one at a time": false} {
+		t.Run(name, func(t *testing.T) { resumeAfterAPartialManifest(t, batch) })
+	}
+}
+
+func resumeAfterAPartialManifest(t *testing.T, batch bool) {
+	e := newEnv(t)
+	d := interruptedBeforeAnchor(t, e)
+	again, _ := Build(e.opts(t, 1))
+	nChunks := len(again.ChunkMemos)
+	if parts := len(d.Txs) - nChunks; parts != 2 {
+		t.Fatalf("setup: the fixture manifest has %d part(s); this test needs 2", parts)
+	}
+	oldPart0 := d.Txs[nChunks]
+	d.Txs = d.Txs[:nChunks+1] // forget manifest part 2
+
+	e.ledger.Batch = batch
+	s := &Submitter{Client: e.ledger, Writer: e.writer, Key: e.key, Dump: d, Batch: batch, Sleep: func(time.Duration) {}, DumpOut: filepath.Join(e.dir, "resumed.dump.json")}
+	if err := s.Submit(again); err != nil {
+		t.Fatal(err)
+	}
+	data, err := e.ledger.LedgerEntryDID(e.writer.Address())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := anchor.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.EqualFold(rec.TxHashHex(), oldPart0.Hash) {
+		t.Fatal("the anchor names the abandoned partial manifest")
+	}
+	keys := discover.RootKeys{Root: e.root}
+	res, err := discover.Run(e.ledger, keys, e.writer.Address(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.AnchorOK || res.Latest == nil || !res.Latest.FromAnchor {
+		t.Fatalf("discovery after the resume: anchorOK=%v latest=%v", res.AnchorOK, res.Latest)
+	}
+	entries, err := discover.Fetch(e.ledger, keys, res, res.Latest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := discover.OpenBundle(keys, res.Latest, again.Bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := restore.Build(res.Latest.Manifest, entries, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range plan.Files {
+		if !f.Complete() {
+			t.Fatalf("%s is not complete after the resumed backup", f.Path)
+		}
+	}
+}
+
 // F-076: the anchor was built in three places and only one checked that
 // the manifest tx hash is 32 bytes of hex. The two others dropped the
 // decode error, so a hash that is not hex became an anchor naming

@@ -241,16 +241,27 @@ func (s *Submitter) tailItems(p *Plan, m *manifest.Manifest, seq uint32) ([]batc
 	return append(items, a), nil
 }
 
-// anchorItem builds the DIDSet inner transaction naming the manifest.
-func (s *Submitter) anchorItem(p *Plan, m *manifest.Manifest, manifestHash string, manifestLedger uint32) (batchItem, error) {
+// anchorData seals the anchor record that names the manifest: part 0 is
+// transaction manifestHash, in ledger manifestLedger (0 when it rides in
+// the same batch). Every anchor is built here, so none can name a hash
+// that is not 32 bytes of hex.
+func (s *Submitter) anchorData(p *Plan, m *manifest.Manifest, manifestHash string, manifestLedger uint32) ([]byte, error) {
 	rec := &anchor.Record{ManifestLedger: manifestLedger, Epoch: m.Epoch, Seq: m.Seq}
 	copy(rec.BackupID[:], p.BackupID)
 	hb, err := hex.DecodeString(manifestHash)
 	if err != nil || len(hb) != 32 {
-		return batchItem{}, fmt.Errorf("manifest hash %q is not 32 bytes of hex", manifestHash)
+		return nil, fmt.Errorf("manifest hash %q is not 32 bytes of hex", manifestHash)
 	}
 	copy(rec.ManifestTxHash[:], hb)
-	data := anchor.Encode(s.Key.Key, rec)
+	return anchor.Encode(s.Key.Key, rec), nil
+}
+
+// anchorItem builds the DIDSet inner transaction naming the manifest.
+func (s *Submitter) anchorItem(p *Plan, m *manifest.Manifest, manifestHash string, manifestLedger uint32) (batchItem, error) {
+	data, err := s.anchorData(p, m, manifestHash, manifestLedger)
+	if err != nil {
+		return batchItem{}, err
+	}
 	tx := &codec.Tx{Type: codec.TxDIDSet, Data: data, Flags: codec.FlagInnerBatchTxn, Account: s.Writer.AccountID(), Memos: s.anchorMemos()}
 	return batchItem{kind: "anchor", tx: tx}, nil
 }
@@ -283,12 +294,10 @@ func (s *Submitter) finishBatched(p *Plan, recs []xrpl.TxRecord, ledger uint32) 
 // sendAnchor is the sequential anchor, used when a resumed run finds the
 // manifest already complete on the ledger.
 func (s *Submitter) sendAnchor(p *Plan, manifestHash string, manifestLedger uint32) error {
-	m := p.Manifest
-	rec := &anchor.Record{ManifestLedger: manifestLedger, Epoch: m.Epoch, Seq: m.Seq}
-	copy(rec.BackupID[:], p.BackupID)
-	hb, _ := hex.DecodeString(manifestHash)
-	copy(rec.ManifestTxHash[:], hb)
-	data := anchor.Encode(s.Key.Key, rec)
+	data, err := s.anchorData(p, p.Manifest, manifestHash, manifestLedger)
+	if err != nil {
+		return err
+	}
 	s.Log("submitting DID anchor")
 	_, ledger, err := s.send(&codec.Tx{Type: codec.TxDIDSet, Data: data, Memos: s.anchorMemos()})
 	if err != nil {
