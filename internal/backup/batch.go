@@ -67,7 +67,7 @@ func (s *Submitter) submitBatched(p *Plan, recorded map[string]dump.Tx, manifest
 	// A complete manifest already on the ledger is reused as is; only the
 	// anchor is left, and a batch cannot carry one transaction.
 	for _, parts := range manifestParts {
-		if first, ok := parts[0]; ok && int(first.total) == len(parts) {
+		if first, ok := completeManifest(parts); ok {
 			if len(pending) > 0 {
 				return errors.New("the dump records a complete manifest but not every chunk it names; refusing to guess. Start a new backup")
 			}

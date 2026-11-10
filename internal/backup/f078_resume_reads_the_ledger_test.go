@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/justinnevins/xrplbak/internal/anchor"
 	"github.com/justinnevins/xrplbak/internal/discover"
 	"github.com/justinnevins/xrplbak/internal/dump"
 	"github.com/justinnevins/xrplbak/internal/restore"
@@ -15,13 +16,14 @@ import (
 
 // forgedDump returns a dump for backup b whose one record is a real
 // transaction of backup a (so the ledger confirms its hash) with the memo
-// rewritten to b's first chunk.
-func forgedDump(t *testing.T, e *env, a, b *Plan, aDump *dump.Dump) *dump.Dump {
+// rewritten to b's first chunk. With all set, every record of a's dump is
+// forged that way, its manifest parts included.
+func forgedDump(t *testing.T, e *env, a, b *Plan, aDump *dump.Dump, all bool) *dump.Dump {
 	t.Helper()
 	hA := a.Manifest.OnChain.Chunks[0].TxHash
 	forged := &dump.Dump{Account: aDump.Account, BackupID: b.Manifest.BackupID}
 	for _, tx := range aDump.Txs {
-		if tx.Hash != hA {
+		if !all && tx.Hash != hA {
 			continue
 		}
 		var top map[string]any
@@ -40,8 +42,8 @@ func forgedDump(t *testing.T, e *env, a, b *Plan, aDump *dump.Dump) *dump.Dump {
 		tx.TxJSON = raw
 		forged.Txs = append(forged.Txs, tx)
 	}
-	if len(forged.Txs) != 1 {
-		t.Fatalf("setup: forged %d records, want 1", len(forged.Txs))
+	if want := map[bool]int{false: 1, true: len(aDump.Txs)}[all]; len(forged.Txs) != want {
+		t.Fatalf("setup: forged %d records, want %d", len(forged.Txs), want)
 	}
 	return forged
 }
@@ -53,8 +55,15 @@ func forgedDump(t *testing.T, e *env, a, b *Plan, aDump *dump.Dump) *dump.Dump {
 // the manifest, and report success. What a recorded transaction carries is
 // now read from the ledger's own answer.
 func TestF078ResumeCreditsOnlyWhatTheLedgerHolds(t *testing.T) {
-	for name, batch := range map[string]bool{"batched": true, "one at a time": false} {
+	type mode struct{ batch, all bool }
+	for name, md := range map[string]mode{
+		"batched, one record":         {true, false},
+		"one at a time, one record":   {false, false},
+		"batched, every record":       {true, true},
+		"one at a time, every record": {false, true},
+	} {
 		t.Run(name, func(t *testing.T) {
+			batch := md.batch
 			e := newEnv(t)
 			e.ledger.Batch = batch
 			a, _ := Build(e.opts(t, 1))
@@ -63,13 +72,30 @@ func TestF078ResumeCreditsOnlyWhatTheLedgerHolds(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			old := map[string]bool{}
+			for _, tx := range aDump.Txs {
+				old[tx.Hash] = true
+			}
 			b, _ := Build(e.opts(t, 2))
-			s := &Submitter{Client: e.ledger, Writer: e.writer, Key: e.key, Dump: forgedDump(t, e, a, b, aDump), Batch: batch, Sleep: func(time.Duration) {}, DumpOut: filepath.Join(e.dir, "b.dump.json")}
+			s := &Submitter{Client: e.ledger, Writer: e.writer, Key: e.key, Dump: forgedDump(t, e, a, b, aDump, md.all), Batch: batch, Sleep: func(time.Duration) {}, DumpOut: filepath.Join(e.dir, "b.dump.json")}
 			if err := s.Submit(b); err != nil {
 				t.Fatal(err)
 			}
-			if got, old := b.Manifest.OnChain.Chunks[0].TxHash, a.Manifest.OnChain.Chunks[0].TxHash; got == old {
-				t.Fatalf("the new backup's manifest names the old backup's chunk transaction %s", old)
+			for i, c := range b.Manifest.OnChain.Chunks {
+				if old[c.TxHash] {
+					t.Fatalf("the new backup's manifest names the old backup's transaction %s for chunk %d", c.TxHash, i+1)
+				}
+			}
+			data, err := e.ledger.LedgerEntryDID(e.writer.Address())
+			if err != nil {
+				t.Fatal(err)
+			}
+			arec, err := anchor.Parse(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if old[arec.TxHashHex()] {
+				t.Fatalf("the new backup's anchor names the old backup's manifest transaction %s", arec.TxHashHex())
 			}
 			held := false
 			for _, rec := range e.ledger.Txs {
@@ -110,5 +136,35 @@ func TestF078ResumeCreditsOnlyWhatTheLedgerHolds(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A manifest counts as already on the ledger only when every part from 0
+// to total-1 is there with one total. Counting parts was not enough: part
+// 0 of 2 plus part 5 of 6 are two parts, and no manifest.
+func TestF078CompleteManifestNeedsEveryPart(t *testing.T) {
+	part := func(total uint16) landed { return landed{tx: dump.Tx{Hash: "AB"}, total: total} }
+	for name, c := range map[string]struct {
+		parts map[uint16]landed
+		want  bool
+	}{
+		"one of one":          {map[uint16]landed{0: part(1)}, true},
+		"both of two":         {map[uint16]landed{0: part(2), 1: part(2)}, true},
+		"first of two":        {map[uint16]landed{0: part(2)}, false},
+		"second of two":       {map[uint16]landed{1: part(2)}, false},
+		"0 of 2 and 5 of 6":   {map[uint16]landed{0: part(2), 5: part(6)}, false},
+		"0 of 2 and 1 of 3":   {map[uint16]landed{0: part(2), 1: part(3)}, false},
+		"0 and 2 of 2":        {map[uint16]landed{0: part(2), 2: part(2)}, false},
+		"three where two fit": {map[uint16]landed{0: part(2), 1: part(2), 2: part(2)}, false},
+		"nothing":             {map[uint16]landed{}, false},
+		"zero total":          {map[uint16]landed{0: part(0)}, false},
+	} {
+		first, ok := completeManifest(c.parts)
+		if ok != c.want {
+			t.Errorf("%s: complete=%v, want %v", name, ok, c.want)
+		}
+		if ok && first.tx.Hash != "AB" {
+			t.Errorf("%s: wrong first part returned", name)
+		}
 	}
 }
