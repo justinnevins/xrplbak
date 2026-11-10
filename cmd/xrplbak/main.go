@@ -407,7 +407,7 @@ func summarizeMoves(moves []redact.Move) {
 // the one place an operator using --comments=onchain sees which of their
 // comments stayed off the ledger, so it has to say so.
 func moveLine(m redact.Move) string {
-	where := "[" + m.Stanza + "]"
+	where := redact.PrintableStanza(m.Stanza)
 	if m.Stanza == "" {
 		where = "the lines before the first stanza"
 	}

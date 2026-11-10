@@ -48,6 +48,8 @@ func TestF068AHeaderIsScannedLikeAnyOtherLine(t *testing.T) {
 		"public address as a header":   "[203.0.113.9]\nx=1\n",
 		"internal host as a header":    "[db.corp.lan]\nx=1\n",
 		"long hex as a header":         "[" + strings.Repeat("AB", 40) + "]\nx=1\n",
+		"64 hex digits as a header":    "[" + strings.Repeat("AB", 32) + "]\nx=1\n",
+		"65 letters as a header":       "[" + strings.Repeat("z", 65) + "]\nx=1\n",
 		"space in the name":            "[my notes]\nx=1\n",
 		"prose in the name":            "[the vault code is 4411]\n",
 		"escape sequence in the name":  "[x\x1b[2A\x1b[Jcomplete\x07]\nx=1\n",
@@ -70,6 +72,7 @@ func TestF068OrdinaryHeadersAreAccepted(t *testing.T) {
 	for n := range bundleStanzas {
 		names = append(names, n)
 	}
+	names = append(names, strings.Repeat("z", 64))
 	names = append(names, "port_rpc_admin_local", "port_peer", "port_ws_public", "my-notes", "x", "A1")
 	for _, n := range names {
 		if _, bad := neverStanzas[n]; bad {
@@ -99,6 +102,9 @@ func TestF069EncodingsThatHideAHeaderAreRefused(t *testing.T) {
 		"BOM before an ordinary stanza":     "\xef\xbb\xbf[server]\nport_rpc\n",
 		"UTF-16LE config":                   utf16le(seedCfg),
 		"UTF-16LE ordinary config":          utf16le("[server]\nport_rpc\n"),
+		"UTF-16 mark, no NUL byte":          "\xff\xfe\x41\x41\n",
+		"UTF-16BE mark, no NUL byte":        "\xfe\xff\x41\x41\n",
+		"BOM before a comment line":         "\ufeff# my config\n[server]\nport_rpc\n",
 		"NUL inside a line":                 "[server]\nport\x00_rpc\n",
 		"no-break space before a header":    "\u00a0" + seedCfg,
 		"next-line char before a header":    "\u0085" + seedCfg,
@@ -140,6 +146,14 @@ func TestF087CommentOnAHeaderShapedValueLineLeavesTheChain(t *testing.T) {
 	}
 	if res.OnChain.Render() != keep {
 		t.Fatalf("on-chain comments: a harmless comment was moved:\n%s", res.OnChain.Render())
+	}
+	addr := "[server]\nport_rpc\n[port_rpc] # reach it at 10.1.2.3\n"
+	res, err = Split(cfg.Parse(addr), Options{Comments: CommentsOnChain})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(res.OnChain.Render(), "10.1.2.3") {
+		t.Fatalf("on-chain comments: a private address in the comment stayed:\n%s", res.OnChain.Render())
 	}
 	leak := "[port_rpc]\nport = 5005\n[x] # password = hunter2\n"
 	res, err = Split(cfg.Parse(leak), Options{Comments: CommentsOnChain})

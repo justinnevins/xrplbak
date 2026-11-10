@@ -124,6 +124,7 @@ Working with an AI assistant? Give it [docs/ai-assistant-guide.md](docs/ai-assis
 | Where | What |
 |---|---|
 | Refused, never handled | validator-keys.json, `[validation_seed]`, `[node_seed]`, wallet.db, TLS private keys |
+| Refused, fix the file first | a config that is not plain UTF-8 (byte order mark, UTF-16, NUL byte), a stanza header behind an invisible character, a stanza name with anything but letters, digits, `_` and `-` |
 | Bundle only, never on the ledger | `[validator_token]`, `[cluster_nodes]`, `[rpc_startup]`, admin access lists other than loopback, private addresses and internal hostnames |
 | Bundle by default, on the ledger if you ask | `[ips_fixed]` (with `--peers=onchain`) |
 | On the ledger, encrypted | everything else in `xrpld.cfg`, and `validators.txt` |

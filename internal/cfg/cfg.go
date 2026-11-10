@@ -46,6 +46,10 @@ func inlineComment(line string) int {
 }
 
 // looksLikeHeader reports whether a line would be read as a stanza header.
+// InlineComment returns where the inline comment of a trimmed line
+// starts, or 0 when it has none.
+func InlineComment(line string) int { return inlineComment(line) }
+
 func looksLikeHeader(line string) bool {
 	return len(line) >= 2 && line[0] == '[' && line[len(line)-1] == ']'
 }
