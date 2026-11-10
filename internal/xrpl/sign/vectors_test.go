@@ -70,7 +70,7 @@ func TestRippledEd25519Vectors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("vector %d: %v", i, err)
 		}
-		if strings.ToUpper(hex.EncodeToString(id)) != strings.ToUpper(hex.EncodeToString(k.AccountID())) {
+		if !strings.EqualFold(hex.EncodeToString(id), hex.EncodeToString(k.AccountID())) {
 			t.Fatalf("vector %d: account id round trip", i)
 		}
 	}

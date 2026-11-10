@@ -10,6 +10,7 @@ import (
 	"crypto/sha512"
 	"errors"
 
+	//lint:ignore SA1019 an XRPL account ID is RIPEMD-160 of SHA-256; the ledger fixes the hash
 	"github.com/justinnevins/xrplbak/internal/xrpl/sign/ripemd160"
 )
 

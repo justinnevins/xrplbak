@@ -127,7 +127,7 @@ func Serialize(tx *Tx, includeSignature bool) ([]byte, error) {
 		}
 	}
 	if len(tx.Account) != 20 {
-		return nil, errors.New("Account must be a 20-byte account ID")
+		return nil, errors.New("the Account field must be a 20-byte account ID")
 	}
 	b = appendHeader(b, 8, 1)
 	b = appendVL(b, tx.Account)

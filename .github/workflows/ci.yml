@@ -23,7 +23,11 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make lint
+      # staticcheck runs with go run at a pinned version, so go.mod keeps
+      # zero requirements.
+      - run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...
       - run: make test
+      - run: go test -race ./...
       - run: make checksums
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
