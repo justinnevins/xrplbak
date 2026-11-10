@@ -3,6 +3,9 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/justinnevins/xrplbak/internal/container"
+	"github.com/justinnevins/xrplbak/internal/xrpl/fake"
 )
 
 // F-080: verify fetched and authenticated the chunks and printed "on-chain
@@ -45,5 +48,22 @@ func TestF080VerifyReportsTheRestoreCheck(t *testing.T) {
 	}
 	if strings.Contains(without.out, "every file rebuilds") {
 		t.Fatalf("without the bundle verify claimed a byte check:\n%s", without.out)
+	}
+}
+
+// A file the manifest stores wholly on-chain must rebuild to the hash the
+// manifest names, bundle or no bundle. A backup where it does not is
+// incomplete, and verify says so.
+func TestF080VerifyFailsWhenAnOnChainFileDoesNotRebuild(t *testing.T) {
+	w := newWorld(t, 7)
+	w.ledger = fake.New()
+	w.ledger.Fund(w.writer.Address(), 5_000_000)
+	p := w.resealOnChain([]container.Entry{{Path: "/etc/xrpld/extra.cfg", Mode: 0o600, Data: []byte("[server]\nport_rpc\n")}})
+	p.Manifest.Files[0].SHA256 = strings.Repeat("0", 64)
+	w.plan = p
+	w.submit(p)
+	rv := w.run("", "verify", "--dump", w.dumpFile("v"), "--words-file", w.words, "--account", w.writer.Address())
+	if rv.code != exitIncomplete || !strings.Contains(rv.out, "does not rebuild to the backed-up bytes") {
+		t.Fatalf("verify exit %d, want %d\n%s", rv.code, exitIncomplete, rv.out)
 	}
 }

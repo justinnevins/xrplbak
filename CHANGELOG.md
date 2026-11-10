@@ -15,6 +15,7 @@
 - Fix: a resumed `backup --submit` read what each recorded transaction carries from the dump file and asked the ledger only whether its hash was there. A dump record that paired a real transaction hash with another memo made the run skip a chunk the ledger never held and report success. A resume now takes each recorded transaction's content from the ledger's own answer, and counts a manifest as already there only when every part from first to last is.
 - Fix: `restore --write --force` over an existing file kept that file's mode. A config backed up as 0600 stayed 0644 if a 0644 file was already there, though the report says files keep their backed-up mode. Each file is now written beside its destination and renamed over it, so it gets exactly the backed-up mode and a failed write leaves the old file whole.
 - `restore --write` refuses a destination that is a symlink or not a regular file, with or without `--force`. It wrote through a symlink to whatever it pointed at.
+- Fix: `verify` passed a backup that `restore` refuses. It fetched and authenticated the chunks and printed `on-chain data: complete`, but never built the restore, so an unsafe path in the manifest verified with exit 0 and then failed on restore with exit 3. `verify` now runs the build `restore` runs and prints a `restore check:` line: with `--bundle` every file is compared to its backed-up bytes; without it, restore's refusals are checked and so is every file stored wholly on-chain. A refusal exits 3, a file that does not rebuild exits 5.
 
 ## v1.1.6 (2026-11-03)
 
