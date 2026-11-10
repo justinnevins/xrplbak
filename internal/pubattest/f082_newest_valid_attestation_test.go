@@ -93,3 +93,21 @@ func TestF082ARetiredKeyDoesNotHideTheValidDelegatedAttestation(t *testing.T) {
 		t.Fatalf("NewerInvalid=%d NewerLedger=%d; want 1 and 40", f.NewerInvalid, f.NewerLedger)
 	}
 }
+
+// Two attestations in one ledger: the later memo is the newer one.
+func TestF082OrderInsideOneLedger(t *testing.T) {
+	m := newMaster(t)
+	one, two := f082Direct(t, m, 1), f082Direct(t, m, 2)
+	f := Evaluate([]xrpl.TxRecord{tx(acctA, 100, one), tx(acctA, 100, two)}, acctA)
+	if f.Status != Valid || f.Record.Seq != 2 {
+		t.Fatalf("status %d seq %d; the later memo in the ledger is seq 2", f.Status, f.Record.Seq)
+	}
+	f = Evaluate([]xrpl.TxRecord{tx(acctA, 100, two), tx(acctA, 100, one)}, acctA)
+	if f.Status != Valid || f.Record.Seq != 1 {
+		t.Fatalf("status %d seq %d; the later memo in the ledger is seq 1", f.Status, f.Record.Seq)
+	}
+	f = EvaluateNewest([]xrpl.TxRecord{tx(acctA, 100, one), tx(acctA, 100, f082Damage(one))}, acctA)
+	if f.Status != Invalid {
+		t.Fatalf("EvaluateNewest: status %d; the newest memo does not verify and no older one may stand in", f.Status)
+	}
+}

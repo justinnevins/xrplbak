@@ -32,6 +32,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -217,8 +218,9 @@ type placed struct {
 }
 
 // Evaluate reads an account's history (oldest first, as AccountTx returns
-// it) and judges the newest attestation. A delegated attestation is valid
-// only when all of these hold:
+// it) and returns the newest attestation that verifies, or the verdict on
+// the newest one when none does. A delegated attestation is valid only when
+// all of these hold:
 //
 //   - a delegation with the same validator key and dseq verifies under the
 //     master key for this account, and landed no later than the attestation;
@@ -228,10 +230,50 @@ type placed struct {
 // Delegation memos whose master signature fails are ignored: whoever holds
 // the writer seed can post memos, but cannot sign for the master key.
 func Evaluate(txs []xrpl.TxRecord, account string) Finding {
+	atts, dels := collect(txs, account)
+	if len(atts) == 0 {
+		return Finding{Status: None}
+	}
+	// The newest attestation that verifies is the answer. Anyone holding
+	// the writer seed can post a memo that does not verify; letting the
+	// newest memo decide gave that holder a way to turn a validator's
+	// standing proof to INVALID. The ones skipped are counted and reported.
+	newest := judge(&atts[0].rec, atts[0].ledger, atts[0].order, dels, account)
+	if newest.Status == Valid {
+		return newest
+	}
+	for i := 1; i < len(atts); i++ {
+		f := judge(&atts[i].rec, atts[i].ledger, atts[i].order, dels, account)
+		if f.Status == Valid {
+			f.NewerInvalid, f.NewerLedger, f.NewerReason = i, newest.Ledger, newest.Reason
+			return f
+		}
+	}
+	return newest
+}
+
+// EvaluateNewest judges the newest attestation alone and never falls back
+// to an older one. backup uses it before publishing: the attestation it is
+// about to send must itself verify, whatever older ones say.
+func EvaluateNewest(txs []xrpl.TxRecord, account string) Finding {
+	atts, dels := collect(txs, account)
+	if len(atts) == 0 {
+		return Finding{Status: None}
+	}
+	return judge(&atts[0].rec, atts[0].ledger, atts[0].order, dels, account)
+}
+
+type seenAtt struct {
+	rec    Record
+	ledger uint32
+	order  int
+}
+
+// collect reads the account's attestation memos, newest first, and the
+// delegations whose master signature verifies.
+func collect(txs []xrpl.TxRecord, account string) ([]seenAtt, []placed) {
 	var dels []placed
-	var att *Record
-	var attLedger uint32
-	attOrder := -1
+	var atts []seenAtt
 	order := 0
 	for i := range txs {
 		t := txs[i]
@@ -246,15 +288,23 @@ func Evaluate(txs []xrpl.TxRecord, account string) Finding {
 				}
 				continue
 			}
-			if r, ok := Decode(m); ok && t.LedgerIndex >= attLedger {
-				rec := r
-				att, attLedger, attOrder = &rec, t.LedgerIndex, order
+			if r, ok := Decode(m); ok {
+				atts = append(atts, seenAtt{r, t.LedgerIndex, order})
 			}
 		}
 	}
-	if att == nil {
-		return Finding{Status: None}
-	}
+	// Newest first: by ledger, then by position for memos in one ledger.
+	sort.SliceStable(atts, func(i, j int) bool {
+		if atts[i].ledger != atts[j].ledger {
+			return atts[i].ledger > atts[j].ledger
+		}
+		return atts[i].order > atts[j].order
+	})
+	return atts, dels
+}
+
+// judge decides one attestation against the delegations seen.
+func judge(att *Record, attLedger uint32, attOrder int, dels []placed, account string) Finding {
 	f := Finding{Record: *att, Ledger: attLedger}
 	if att.Version != VersionDelegated {
 		if att.Verify(account) {

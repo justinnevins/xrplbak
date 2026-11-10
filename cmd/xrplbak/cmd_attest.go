@@ -49,7 +49,8 @@ func cmdAttestVerify(args []string) error {
 	fmt.Fprintf(stdout, "  searched: ledgers %d to %d\n", rng.Min, rng.Max)
 	if f.Status == pubattest.None {
 		fmt.Fprintln(stdout, "  result:   none. This account publishes no public backup attestation.")
-		return fail(exitRefused, "no public attestation found for %s", *account)
+		// Not exit 3: nothing was refused. The lookup worked and found none.
+		return fail(exitIncomplete, "no public attestation found for %s", *account)
 	}
 	latest := f.Record
 	if f.Status == pubattest.Invalid {
@@ -67,6 +68,9 @@ func cmdAttestVerify(args []string) error {
 		fmt.Fprintln(stdout, "  signed:   by the validator master key directly")
 	}
 	fmt.Fprintf(stdout, "  backup:   epoch %d seq %d, id %s, in ledger %d\n", latest.Epoch, latest.Seq, latest.BackupIDHex(), f.Ledger)
+	if f.NewerInvalid > 0 {
+		fmt.Fprintf(stdout, "  WARNING:  %d newer attestation memo(s) on this account do not verify (the newest is in ledger %d: %s). They are ignored: anyone holding the writer key can post one. The attestation above is the newest that verifies\n", f.NewerInvalid, f.NewerLedger, f.NewerReason)
+	}
 	fmt.Fprintln(stdout, "  note:     this proves identity, publication and recency. It does not prove the operator can still restore.")
 	return nil
 }

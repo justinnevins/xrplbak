@@ -632,7 +632,7 @@ func delegatedMemos(client xrpl.Client, account string, att *attestKey, delegSig
 		}
 	}
 	next := append(append([]xrpl.TxRecord(nil), txs...), xrpl.TxRecord{Account: account, LedgerIndex: top + 1, Result: "tesSUCCESS", Memos: memos})
-	if f := pubattest.Evaluate(next, account); f.Status != pubattest.Valid {
+	if f := pubattest.EvaluateNewest(next, account); f.Status != pubattest.Valid {
 		if deleg == nil && strings.Contains(f.Reason, "no valid delegation") {
 			return nil, nil, fail(exitUsage, "no delegation for attestation key dseq %d is on the ledger yet. Sign this exact string offline with validator-keys sign and pass --attest-delegation-sig <hex>:\n  %s", att.DSeq, delegString)
 		}
