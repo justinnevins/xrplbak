@@ -25,6 +25,7 @@ func TestF077OnChainCommentFollowsTheRuleForASetting(t *testing.T) {
 		"token comment with two hashes":    {"[validator_token]\n## " + tok + "\n", tok},
 		"indented token comment":           {"[validator_token]\n   \t# " + tok + "\n", tok},
 		"commented password in a port":     {"[port_rpc]\nport = 5005\n#password = hunter2\n", "hunter2"},
+		"indented commented password":      {"[port_rpc]\nport = 5005\n  \t# password = hunter2\n", "hunter2"},
 		"commented admin_password":         {"[port_ws]\nport = 6006\n# admin_password=hunter2\n", "hunter2"},
 		"commented ssl_key path":           {"[port_peer]\nport = 51235\n# ssl_key = /etc/ssl/private/node.pem\n", "/etc/ssl/private"},
 		"commented cluster node":           {"[cluster_nodes]\n# " + node + " east\n", node},
@@ -65,5 +66,26 @@ func TestF077OrdinaryCommentsStillGoOnChain(t *testing.T) {
 	}
 	if len(res.Moves) != 0 {
 		t.Fatalf("moves reported for a file with nothing to move: %+v", res.Moves)
+	}
+}
+
+// With --peers=onchain a fixed peer may go on-chain, so a comment naming a
+// public peer may too. The comment follows the same opt-in the setting
+// does, no more and no less.
+func TestF077CommentFollowsThePeersOptIn(t *testing.T) {
+	text := "[ips_fixed]\n# r.ripple.com 51235\nr.ripple.com 51235\n"
+	res, err := Split(cfg.Parse(text), Options{Comments: CommentsOnChain, PeersOnChain: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on := res.OnChain.Render(); on != text {
+		t.Fatalf("with peers on-chain the comment must stay beside its peer:\n%s", on)
+	}
+	res, err = Split(cfg.Parse(text), Options{Comments: CommentsOnChain})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on := res.OnChain.Render(); strings.Contains(on, "r.ripple.com") {
+		t.Fatalf("without peers on-chain neither line may stay:\n%s", on)
 	}
 }
