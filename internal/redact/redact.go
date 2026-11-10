@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/justinnevins/xrplbak/internal/cfg"
 )
@@ -167,7 +169,56 @@ type RefusedError struct {
 }
 
 func (e *RefusedError) Error() string {
-	return fmt.Sprintf("refused: [%s] (line %d): %s", e.Stanza, e.LineNo, e.Reason)
+	where := "[]"
+	if e.Stanza != "" {
+		where = PrintableStanza(e.Stanza)
+	}
+	return fmt.Sprintf("refused: %s (line %d): %s", where, e.LineNo, e.Reason)
+}
+
+// plainName reports whether a stanza name is one xrplbak puts on a
+// public ledger and prints as written: letters, digits, underscore and
+// dash, at most 64 of them. Every name rippled knows fits.
+func plainName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// PrintableStanza renders a stanza name for a terminal. A plain name
+// prints as [name]. Any other name is quoted with every control and
+// non-ASCII character escaped: the name in a manifest comes from whoever
+// made the backup, and a raw escape sequence can rewrite the screen.
+func PrintableStanza(name string) string {
+	if plainName(name) {
+		return "[" + name + "]"
+	}
+	return strconv.QuoteToASCII("[" + name + "]")
+}
+
+// encodingReason refuses text rippled does not read the way an editor
+// shows it. A byte order mark, a UTF-16 encoding or a non-ASCII space in
+// front of a header hides that header from rippled and from every rule
+// here, so a secret stanza would be handled as ordinary lines.
+func encodingReason(raw string, first bool) string {
+	if first && (strings.HasPrefix(raw, "\xff\xfe") || strings.HasPrefix(raw, "\xfe\xff")) ||
+		strings.Contains(raw, "\x00") || strings.Contains(raw, "\ufeff") {
+		return "the file is not plain UTF-8 text (it has a byte order mark or a NUL byte); save it as UTF-8 without a byte order mark and retry"
+	}
+	t := strings.TrimFunc(raw, func(r rune) bool {
+		return unicode.IsSpace(r) || r >= 0x80 && r <= 0x9f || unicode.In(r, unicode.Cf, unicode.Zs, unicode.Zl, unicode.Zp)
+	})
+	if t != strings.Trim(raw, " \t\n\v\f\r") && len(t) >= 2 && t[0] == '[' && t[len(t)-1] == ']' {
+		return "a stanza header sits behind a character that is not a plain space, so rippled does not read it as a header; remove that character and retry"
+	}
+	return ""
 }
 
 // Split classifies f line by line. The config is the main xrpld.cfg.
@@ -236,6 +287,24 @@ func Split(f *cfg.File, opt Options) (*Result, error) {
 				continue
 			}
 			if l.Comment == "" {
+				// The parser keeps the comment of a line such as
+				// "[port_rpc] # note" inside the value. It is judged as
+				// a comment all the same, and the whole line moves.
+				if c := cfg.InlineComment(l.Value); c > 0 {
+					held := l.Value[c:]
+					if opt.Comments == CommentsToBundle {
+						move(l, MovedMarker, "operator comment")
+						continue
+					}
+					if why := lineReason(l.Stanza, held); why != "" {
+						move(l, MovedMarker, why)
+						continue
+					}
+					if why := commentReason(l.Stanza, held, opt); why != "" {
+						move(l, MovedMarker, why)
+						continue
+					}
+				}
 				keep(l)
 				continue
 			}
@@ -288,8 +357,13 @@ func refuse(f *cfg.File) error {
 			return &RefusedError{Stanza: s.Name, LineNo: s.LineNo, Reason: reason}
 		}
 	}
+	for i, l := range f.Lines {
+		if why := encodingReason(l.Raw, i == 0); why != "" {
+			return &RefusedError{Stanza: l.Stanza, LineNo: l.No, Reason: why}
+		}
+	}
 	for _, l := range f.Lines {
-		if l.Kind == cfg.Blank || l.Kind == cfg.Header {
+		if l.Kind == cfg.Blank {
 			continue
 		}
 		text := l.Raw
@@ -301,6 +375,17 @@ func refuse(f *cfg.File) error {
 		}
 		if strings.Contains(text, cfg.MarkerPrefix) {
 			return &RefusedError{Stanza: l.Stanza, LineNo: l.No, Reason: "file contains an xrplbak restore marker; finish the restore (merge the bundle) before backing it up"}
+		}
+		// A header always stays on-chain, so its name is held to a plain
+		// name: no address, host name, prose or control character.
+		// An empty name, "[]", carries nothing and is left alone.
+		if l.Kind == cfg.Header {
+			if l.Stanza != "" && !plainName(l.Stanza) {
+				return &RefusedError{Stanza: l.Stanza, LineNo: l.No, Reason: "stanza name is not a plain name; a header goes on the public ledger as written, so a name may hold only letters, digits, _ and -, at most 64"}
+			}
+			if reHex.MatchString(l.Stanza) {
+				return &RefusedError{Stanza: l.Stanza, LineNo: l.No, Reason: "stanza name is a long hex value"}
+			}
 		}
 	}
 	return nil

@@ -281,8 +281,13 @@ func refuseSecrets(path string, raw []byte) error {
 	if base == "validator-keys.json" || base == "wallet.db" || strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") {
 		return fmt.Errorf("%s: refused. xrplbak never handles validator master keys, wallet.db, or private key files", path)
 	}
-	if low := strings.ToLower(string(raw)); strings.Contains(low, "secret_key") || strings.Contains(low, "-----begin") {
-		return fmt.Errorf("%s: refused. File contains key material (secret_key or PEM)", path)
+	// The scan also reads the file with its NUL bytes dropped: in UTF-16
+	// every other byte of plain text is zero, which hid both words.
+	low := strings.ToLower(string(raw))
+	for _, text := range []string{low, strings.ReplaceAll(low, "\x00", "")} {
+		if strings.Contains(text, "secret_key") || strings.Contains(text, "-----begin") {
+			return fmt.Errorf("%s: refused. File contains key material (secret_key or PEM)", path)
+		}
 	}
 	return nil
 }

@@ -153,7 +153,7 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, erro
 // two files in a backup, an item must name which file it belongs to; and a
 // comment-only move must not read as a missing setting.
 func todoLine(r manifest.Redaction, path string) string {
-	where := "[" + r.Stanza + "]"
+	where := redact.PrintableStanza(r.Stanza)
 	if r.Stanza == "" {
 		where = "the lines before the first stanza"
 	}
