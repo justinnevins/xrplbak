@@ -155,8 +155,10 @@ func Split(secret []byte, parts, threshold int) ([][]byte, error) {
 	}
 
 	// Generate random list of x coordinates
-	mathrand.Seed(time.Now().UnixNano())
-	xCoordinates := mathrand.Perm(255)
+	// xrplbak change: a local generator, not the deprecated global Seed.
+	// The order is not secret: each x coordinate is the last byte of its
+	// share, in the clear. The polynomial comes from crypto/rand.
+	xCoordinates := mathrand.New(mathrand.NewSource(time.Now().UnixNano())).Perm(255) // #nosec G404 -- share order is public, see above
 
 	// Allocate the output array, initialize the final byte
 	// of the output with the offset. The representation of each

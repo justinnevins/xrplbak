@@ -1,0 +1,9 @@
+# Proposes updates for the pinned GitHub Actions only. xrplbak has no Go
+# dependencies, so there is nothing else to update. Each proposal is a
+# pull request that keeps the commit pin and its version comment.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

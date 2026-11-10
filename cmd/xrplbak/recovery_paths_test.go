@@ -145,7 +145,7 @@ func TestMixedCaseWordsAreAccepted(t *testing.T) {
 		if i%2 == 0 {
 			mixed[i] = strings.ToUpper(x)
 		} else {
-			mixed[i] = strings.Title(x) //nolint:staticcheck // ASCII words only
+			mixed[i] = strings.ToUpper(x[:1]) + x[1:] // ASCII words only
 		}
 	}
 	p := writeWords(t, w, "wcase.txt", strings.Join(mixed, " ")+"\n")

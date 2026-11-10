@@ -36,6 +36,7 @@ func TestDelegatedAttestationEndToEnd(t *testing.T) {
 		return hex.EncodeToString(ed25519.Sign(master, []byte(pubattest.DelegationString(vpk, account, k.pub(), k.DSeq))))
 	}
 	seq := uint32(1)
+	//lint:ignore ST1008 the exit code reads last at every call site
 	submit := func(k *attestKey, sig string) (error, int) {
 		t.Helper()
 		before, _, _ := w.ledger.AccountTx(account)

@@ -17,7 +17,7 @@ func TestF071BuildRefusesAFileNameRestoreWouldRefuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"x\ny.cfg", "x\x1b[2Ky.cfg", "x‮y.cfg", "x\u009by.cfg", "x​y.cfg", "x\xffy.cfg"} {
+	for _, name := range []string{"x\ny.cfg", "x\x1b[2Ky.cfg", "x\u202ey.cfg", "x\u009by.cfg", "x\u200by.cfg", "x\xffy.cfg"} {
 		e := newEnv(t)
 		dir := t.TempDir()
 		p := filepath.Join(dir, name)
@@ -41,7 +41,7 @@ func TestF071BuildRefusesAFileNameRestoreWouldRefuse(t *testing.T) {
 			if !strings.Contains(err.Error(), "cannot be backed up") {
 				t.Errorf("%q %s: failed for another reason: %v", name, where, err)
 			}
-			if strings.ContainsAny(err.Error(), "\n\x1b‮\u009b​") {
+			if strings.ContainsAny(err.Error(), "\n\x1b\u202e\u009b\u200b") {
 				t.Errorf("%q %s: the error carries the raw characters to the terminal: %q", name, where, err.Error())
 			}
 		}

@@ -29,6 +29,7 @@ func validatorKey(t *testing.T) (string, ed25519.PrivateKey) {
 	return sign.EncodeNodePublic(append([]byte{0xED}, pub...)), priv
 }
 
+//lint:ignore ST1008 the exit code reads last at every call site
 func attestSubmit(t *testing.T, w *world, vpk, sigHex string) (error, int) {
 	t.Helper()
 	ledger := fake.New()
