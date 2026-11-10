@@ -413,7 +413,9 @@ func TestAdversarialCorpus(t *testing.T) {
 				}
 				return nil
 			},
-			code: exitAuth, msg: "not in the searched range",
+			// Exit 5 since F-081 (was 4): the anchor authenticated, so the
+			// key is right and the backup is what is missing.
+			code: exitIncomplete, msg: "not in the searched range",
 		},
 
 		// ---- tombstone -----------------------------------------------------------

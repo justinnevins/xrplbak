@@ -191,6 +191,7 @@ func cmdVerify(args []string) error {
 		return err
 	}
 	hr("Selected backup")
+	reportSelected(latest, *sf.dumpPath != "")
 	entries, err := discover.Fetch(s.client, s.keys, res, latest)
 	switch {
 	case latest.Manifest.Tombstone:
@@ -316,6 +317,8 @@ func cmdRestore(args []string) error {
 	if err != nil {
 		return err
 	}
+	hr("Selected backup")
+	reportSelected(cand, *sf.dumpPath != "")
 	if cand.Manifest.Tombstone {
 		if !*allowTomb {
 			return fail(exitIncomplete, "the newest backup is a tombstone: the operator retired these backups. Pass --allow-tombstoned to restore the newest real backup anyway")

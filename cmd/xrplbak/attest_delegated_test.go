@@ -88,15 +88,24 @@ func TestDelegatedAttestationEndToEnd(t *testing.T) {
 	}
 
 	// A thief who kept key 1 posts an attestation with it directly, around
-	// the submit-time check. attest-verify must call it invalid, and why.
+	// the submit-time check. Since F-082 (Justin's decision, 2026-11-10)
+	// that memo no longer turns the verdict to INVALID: whoever holds the
+	// writer seed and an old key could otherwise void the validator's proof
+	// for good by posting after every backup. attest-verify answers with
+	// the newest attestation that verifies, key 2's, and warns about the
+	// thief's memo with the reason. Before F-082 this was exit 4, INVALID.
 	seq++
 	p := w.build(seq, w.cfgPath, w.valPath)
 	memo, err := pubattest.DelegatedMemo(vpk, account, k1.Priv, 1, p.Manifest.Epoch, p.Manifest.Seq, p.Manifest.BackupID)
 	must(t, err)
 	s := &backup.Submitter{Client: w.ledger, Writer: w.writer, Key: w.key, Sleep: func(time.Duration) {}, AttestMemo: &memo}
 	must(t, s.Submit(p))
-	if r := verify(); r.code != exitAuth || !strings.Contains(r.out, "INVALID") || !strings.Contains(r.out, "replaced by key 2") {
-		t.Fatalf("attest-verify must reject the replaced key's attestation with the reason: exit %d\n%s", r.code, r.out)
+	r := verify()
+	if r.code != exitOK || !strings.Contains(r.out, "delegated attestation key 2") {
+		t.Fatalf("attest-verify must still answer with key 2's attestation: exit %d\n%s", r.code, r.out)
+	}
+	if !strings.Contains(r.out, "WARNING:  1 newer attestation memo(s)") || !strings.Contains(r.out, "replaced by key 2") {
+		t.Fatalf("attest-verify must warn about the replaced key's attestation, with the reason:\n%s", r.out)
 	}
 }
 

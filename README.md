@@ -226,7 +226,7 @@ Scripts branch on the code. People read the message.
 | 2 | network: the XRPL server could not be read |
 | 3 | refused: the input holds something the tool will not handle (a seed, PEM material, a restore marker, an unsafe path in a backup) |
 | 4 | authentication: nothing authenticates with this key, a chunk, manifest, bundle, or share fails its check, or two different backups claim the same seq |
-| 5 | incomplete: a chunk is missing from the searched history, or the newest backup is a tombstone. A restore that is only missing bundle content is PARTIAL, not incomplete, and exits 0 |
+| 5 | incomplete: a chunk is missing from the searched history, the anchor names a backup that history does not hold, the newest backup is a tombstone, or `attest-verify` found no attestation. A restore that is only missing bundle content is PARTIAL, not incomplete, and exits 0 |
 | 6 | write: `--write` refused (file exists, two files share a name, target under /var/lib) or failed |
 
 When two different backups authenticate at the same epoch and seq, verify and restore refuse to pick one. Name the backup with `--backup-id <hex prefix>` after checking who else holds the writer key.

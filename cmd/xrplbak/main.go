@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/justinnevins/xrplbak/internal/backup"
 	"github.com/justinnevins/xrplbak/internal/cfg"
@@ -421,6 +422,40 @@ func moveLine(m redact.Move) string {
 }
 
 // reportRun prints discovery output shared by verify and restore.
+// backupAge renders a manifest's created time for the operator, with how
+// long ago that was by this computer's clock.
+func backupAge(created string, now time.Time) string {
+	if created == "" {
+		return "(no date recorded)"
+	}
+	t, err := time.Parse(time.RFC3339, created)
+	if err != nil {
+		return created + " (unreadable date)"
+	}
+	when := t.UTC().Format("2006-01-02 15:04 UTC")
+	days := int(now.Sub(t).Hours() / 24)
+	switch {
+	case now.Before(t):
+		return when + " (dated after this computer's clock)"
+	case days == 0:
+		return when + " (today)"
+	case days == 1:
+		return when + " (1 day ago)"
+	}
+	return fmt.Sprintf("%s (%d days ago)", when, days)
+}
+
+// reportSelected says which backup the run will use and how old it is. A
+// dump file is a picture of the ledger on the day it was written, so a run
+// that reads one says a newer backup may exist.
+func reportSelected(c *discover.Candidate, fromDump bool) {
+	fmt.Fprintf(stdout, "  selected: epoch %d seq %d, id %s\n", c.Epoch, c.Manifest.Seq, c.Manifest.BackupID[:16])
+	fmt.Fprintf(stdout, "  made:     %s\n", backupAge(c.Manifest.Created, time.Now()))
+	if fromDump {
+		fmt.Fprintln(stdout, "  note:     a dump file shows the ledger as it was when the file was written. A newer backup may exist; --rpc reads the ledger itself")
+	}
+}
+
 func reportRun(res *discover.Result, source string) {
 	hr("Discovery")
 	fmt.Fprintf(stdout, "  source:   %s\n", source)
