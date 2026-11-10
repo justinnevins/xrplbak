@@ -179,6 +179,11 @@ func todoLine(r manifest.Redaction, path string) string {
 // printed, so a file that was never recovered can be made to read as
 // complete. The bidirectional format characters are refused for the same
 // reason: they reorder the displayed line without changing its bytes.
+// CheckPath is checkPath for callers outside the package. backup runs it
+// on every file it is asked to store, so that it never writes a backup
+// restore would refuse.
+func CheckPath(p string) error { return checkPath(p) }
+
 func checkPath(p string) error {
 	bad := func() error { return fmt.Errorf("refused: unsafe path %q in backup", p) }
 	if p == "" {
