@@ -190,7 +190,7 @@ func checkPath(p string) error {
 		return bad()
 	}
 	for _, r := range p {
-		if r < 0x20 || r == 0x7f || isBidiControl(r) {
+		if r < 0x20 || r == 0x7f || isBidiControl(r) || isInvisible(r) {
 			return bad()
 		}
 	}
@@ -211,6 +211,25 @@ func checkPath(p string) error {
 		}
 	}
 	return nil
+}
+
+// isInvisible reports characters a terminal acts on or draws as nothing:
+// the C1 controls (U+0080 to U+009F, which include CSI and NEL), the line
+// and paragraph separators, the zero-width characters, the soft hyphen and
+// the Arabic letter mark. Like the C0 controls, they let a path change how
+// the report reads without changing what it says.
+func isInvisible(r rune) bool {
+	switch {
+	case r >= 0x80 && r <= 0x9f:
+		return true
+	case r == 0x2028 || r == 0x2029:
+		return true
+	case r == 0x200b || r == 0x200c || r == 0x200d || r == 0x2060 || r == 0xfeff:
+		return true
+	case r == 0xad || r == 0x061c:
+		return true
+	}
+	return false
 }
 
 // isBidiControl reports the Unicode format characters that reorder or

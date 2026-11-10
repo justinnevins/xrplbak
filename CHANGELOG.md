@@ -20,6 +20,9 @@
 - Changed: `attest-verify` answers with the newest attestation that verifies. One memo that does not verify, posted after a good attestation, turned the answer to INVALID, and whoever holds the writer key can post one. Such memos are now counted in a `WARNING:` line with the reason, and the exit code is 0. When no attestation verifies the answer is still INVALID, exit 4. `backup --attest` still refuses to publish an attestation that would not itself verify.
 - Changed: `attest-verify` exits 5, not 3, when the account publishes no attestation. Exit 3 means the tool refused an input.
 - `restore` and `verify` print which backup they selected and when it was made, with its age. Reading from `--dump` adds a note that a dump file shows the ledger as it was when the file was written, so a newer backup may exist.
+- Fix: `backup` refuses a file whose name `restore` would refuse (a control or invisible character in the name, or a path that is not clean and absolute). It accepted such a file, so a backup could be submitted that no restore would take. The refusal now comes at plan time, before anything is sent.
+- `restore` refuses more characters in a path: the C1 controls (U+0080 to U+009F), the line and paragraph separators, the zero-width characters, the soft hyphen and the Arabic letter mark. They reached the terminal report.
+- Fix: `init --key-passphrase` and `init --rotate --key-passphrase` refuse an empty passphrase. They wrote a key file wrapped with the empty string.
 
 ## v1.1.6 (2026-11-03)
 

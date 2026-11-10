@@ -34,7 +34,7 @@ func TestF086RotateRefusesAnEmptyPassphrase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := w.run("\n\n", "init", "--rotate", "--key", w.keyFile, "--words-file", w.words, "--key-passphrase")
+	r := w.run("\n\n", "init", "--rotate", "--out", filepath.Dir(w.keyFile), "--words-file", w.words, "--key-passphrase")
 	if r.code != exitUsage || !strings.Contains(r.out, "empty passphrase") {
 		t.Fatalf("exit %d, want %d with the reason\n%s", r.code, exitUsage, r.out)
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/justinnevins/xrplbak/internal/manifest"
 	"github.com/justinnevins/xrplbak/internal/pubattest"
 	"github.com/justinnevins/xrplbak/internal/redact"
+	"github.com/justinnevins/xrplbak/internal/restore"
 	"github.com/justinnevins/xrplbak/internal/xrpl"
 	"github.com/justinnevins/xrplbak/internal/xrpl/codec"
 	"github.com/justinnevins/xrplbak/internal/xrpl/sign"
@@ -258,6 +259,13 @@ func readFile(path string) ([]byte, uint32, string, error) {
 	}
 	if !st.Mode().IsRegular() {
 		return nil, 0, "", fmt.Errorf("%s is not a regular file", path)
+	}
+	// restore refuses a path with control or invisible characters, so a
+	// backup that stores one could never be restored. Say so now, before
+	// anything is sent. The name is quoted: it must not reach the terminal
+	// raw.
+	if err := restore.CheckPath(path); err != nil {
+		return nil, 0, "", fmt.Errorf("%q cannot be backed up: its name holds a control or invisible character, or is not a clean absolute path, and restore would refuse it. Rename the file", path)
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
