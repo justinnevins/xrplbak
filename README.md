@@ -49,7 +49,7 @@ Write the 24 words and the writer account address on paper. Fund the writer acco
 
 ```
 xrplbak redact                    # show what goes where; writes nothing
-xrplbak backup                    # dry run: the plan and the bundle file, nothing sent
+xrplbak backup                    # dry run: the plan and the bundle file, no transaction sent
 xrplbak backup --submit --rpc mainnet
 ```
 
@@ -62,6 +62,8 @@ Back up again after you change the config. Validator configs change rarely, so a
 ```
 xrplbak backup --submit           # then copy the two files it names off the host
 ```
+
+With a saved server, a dry run reads the account from that server to plan the next sequence; it still sends no transaction. The settings file is refused when group or others can write it.
 
 ## Usage
 

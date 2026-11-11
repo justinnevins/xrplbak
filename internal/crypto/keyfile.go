@@ -63,6 +63,10 @@ func (k *KeyFile) Encode() []byte {
 	return append(b, sum[:]...)
 }
 
+// wrapVersion is the fifth byte of a wrapped key file. It names the key
+// derivation and cipher, so a build must refuse a value it does not know.
+const wrapVersion = 1
+
 // EncodeWrapped renders the key file encrypted under a passphrase.
 func (k *KeyFile) EncodeWrapped(passphrase []byte) ([]byte, error) {
 	salt := make([]byte, 16)
@@ -77,7 +81,7 @@ func (k *KeyFile) EncodeWrapped(passphrase []byte) ([]byte, error) {
 	copy(key[:], wk)
 	ct := gcm(key).Seal(nil, make([]byte, nonceLen), k.Encode(), keyfileAAD)
 	out := append([]byte{}, wrappedMagic...)
-	out = append(out, 1)
+	out = append(out, wrapVersion)
 	out = append(out, salt...)
 	return append(out, ct...), nil
 }
@@ -91,6 +95,9 @@ func DecodeKeyFile(b []byte, passphrase []byte) (*KeyFile, error) {
 	if IsWrapped(b) {
 		if len(b) < 4+1+16+TagLen {
 			return nil, errors.New("key file is truncated")
+		}
+		if b[4] != wrapVersion {
+			return nil, fmt.Errorf("key file wrap version %d is not one this build reads (it reads version %d); use the xrplbak release that wrote the file", b[4], wrapVersion)
 		}
 		if passphrase == nil {
 			return nil, errors.New("key file is passphrase protected; pass --key-passphrase")

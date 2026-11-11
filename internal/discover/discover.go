@@ -148,6 +148,7 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 	type setKey struct {
 		id    [16]byte
 		nonce [crypto.ManifestNonceLen]byte
+		total uint16
 	}
 	sets := map[setKey]*partSet{}
 	var order []setKey
@@ -164,18 +165,18 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 			if p.Total > chunk.MaxManifestParts {
 				// Never opened: say so, rather than let an older backup
 				// pass as the newest.
-				oversized[setKey{p.BackupID, p.Nonce}] = p.Total
+				oversized[setKey{p.BackupID, p.Nonce, p.Total}] = p.Total
 				continue
 			}
-			k := setKey{p.BackupID, p.Nonce}
+			// The part count is in the key: a junk memo that copies an id
+			// and nonce with another count makes its own set, and cannot
+			// hide the real one by being listed first.
+			k := setKey{p.BackupID, p.Nonce, p.Total}
 			ps := sets[k]
 			if ps == nil {
 				ps = &partSet{total: p.Total, parts: map[uint16][]memoPart{}}
 				sets[k] = ps
 				order = append(order, k)
-			}
-			if p.Total != ps.total {
-				continue
 			}
 			ps.parts[p.Index] = append(ps.parts[p.Index], memoPart{ct: p.Ciphertext, tx: t.Hash, ledger: t.LedgerIndex})
 		}

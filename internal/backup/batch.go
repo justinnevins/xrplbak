@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -262,6 +263,7 @@ func (s *Submitter) anchorItem(p *Plan, m *manifest.Manifest, manifestHash strin
 	if err != nil {
 		return batchItem{}, err
 	}
+	s.anchorSent = data
 	tx := &codec.Tx{Type: codec.TxDIDSet, Data: data, Flags: codec.FlagInnerBatchTxn, Account: s.Writer.AccountID(), Memos: s.anchorMemos()}
 	return batchItem{kind: "anchor", tx: tx}, nil
 }
@@ -286,6 +288,12 @@ func (s *Submitter) finishBatched(p *Plan, recs []xrpl.TxRecord, ledger uint32) 
 	data, err := s.Client.LedgerEntryDID(s.Writer.Address())
 	if err != nil {
 		return fmt.Errorf("anchor batch validated but the DID entry cannot be read: %w", err)
+	}
+	// The dump is the offline restore source, so it takes only the anchor
+	// this run sent. A different entry means another writer replaced it,
+	// or the answer is wrong; either way the run must not report success.
+	if s.anchorSent != nil && !bytes.Equal(data, s.anchorSent) {
+		return errors.New("anchor batch validated but the DID entry on the ledger is not the anchor this run sent. Run \"xrplbak verify\" against a server you trust before you rely on this backup")
 	}
 	s.Dump.DID = &dump.DID{LedgerIndex: ledger, Data: strings.ToUpper(hex.EncodeToString(data))}
 	return s.saveDump()

@@ -359,6 +359,10 @@ const FeePoll = 15 * time.Second
 
 // Submitter carries what Submit needs beyond the plan.
 type Submitter struct {
+	// anchorSent is the anchor the batched path built, kept to compare
+	// with the DID entry it reads back.
+	anchorSent []byte
+
 	Client xrpl.Client
 	Writer *sign.Key
 	Key    *crypto.KeyFile

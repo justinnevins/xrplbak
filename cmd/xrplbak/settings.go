@@ -17,8 +17,9 @@ import (
 // and fixed peers go. It is written only by backup --submit --save, after a
 // backup landed, and only with the choices that run used. An on-chain choice
 // can only reach it from a run in which the operator typed the phrase, or
-// from the file itself. The file sits beside the key file with the same
-// mode, so whoever can edit it can already read the key.
+// from the file itself. The file is written with mode 0600 and is refused
+// when group or others can write it. Someone who can write the directory
+// can still replace the file, so the directory must be the operator's.
 const settingsName = "xrplbak.settings"
 
 // settings are the saved choices. An empty field is not set.
@@ -100,10 +101,19 @@ func parseSettings(text string) (*settings, error) {
 // loadSettings reads the file at path. A missing file is no settings, not
 // an error. Any other problem is an error.
 func loadSettings(path string) (*settings, bool, error) {
-	raw, err := os.ReadFile(filepath.Clean(path))
+	st, err := os.Stat(filepath.Clean(path))
 	if errors.Is(err, os.ErrNotExist) {
 		return &settings{}, false, nil
 	}
+	if err != nil {
+		return nil, false, err
+	}
+	// The file can turn on-chain publishing on without the typed phrase,
+	// so it counts only when its owner alone can write it.
+	if st.Mode().Perm()&0o022 != 0 {
+		return nil, false, fmt.Errorf("file mode %o lets others write it; run \"chmod 600\" on it after you check its content", st.Mode().Perm())
+	}
+	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, false, err
 	}

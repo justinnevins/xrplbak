@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/justinnevins/xrplbak/internal/xrpl/codec"
@@ -76,8 +77,11 @@ func ParseTxJSON(raw json.RawMessage, meta json.RawMessage) (*TxRecord, error) {
 	if err := json.Unmarshal(raw, &top); err != nil {
 		return nil, err
 	}
+	// body is its own map when the fields sit under tx_json: decoding
+	// into top would let an inner key replace the outer one of that name.
 	body := top
 	if inner, ok := top["tx_json"]; ok {
+		body = map[string]json.RawMessage{}
 		if err := json.Unmarshal(inner, &body); err != nil {
 			return nil, err
 		}
@@ -125,13 +129,21 @@ func ParseTxJSON(raw json.RawMessage, meta json.RawMessage) (*TxRecord, error) {
 				MemoFormat string `json:"MemoFormat"`
 			} `json:"Memo"`
 		}
-		if err := json.Unmarshal(memos, &list); err == nil {
-			for _, e := range list {
-				t, _ := hex.DecodeString(e.Memo.MemoType)
-				d, _ := hex.DecodeString(e.Memo.MemoData)
-				f, _ := hex.DecodeString(e.Memo.MemoFormat)
-				r.Memos = append(r.Memos, codec.Memo{Type: t, Data: d, Format: f})
+		// A memo field that is not hex is refused, not shortened to the
+		// part that decodes: less data must never pass for all of it.
+		if err := json.Unmarshal(memos, &list); err != nil {
+			return nil, fmt.Errorf("transaction %s: Memos is not a list of memos", r.Hash)
+		}
+		for _, e := range list {
+			var parts [3][]byte
+			for i, s := range []string{e.Memo.MemoType, e.Memo.MemoData, e.Memo.MemoFormat} {
+				b, err := hex.DecodeString(s)
+				if err != nil {
+					return nil, fmt.Errorf("transaction %s: a memo field is not hex", r.Hash)
+				}
+				parts[i] = b
 			}
+			r.Memos = append(r.Memos, codec.Memo{Type: parts[0], Data: parts[1], Format: parts[2]})
 		}
 	}
 	return r, nil

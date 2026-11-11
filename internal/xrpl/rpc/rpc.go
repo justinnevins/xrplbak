@@ -133,6 +133,9 @@ func (c *Client) Tx(hash string) (*xrpl.TxRecord, error) {
 	if rec.Hash == "" {
 		rec.Hash = hash
 	}
+	if !strings.EqualFold(rec.Hash, hash) {
+		return nil, fmt.Errorf("tx: asked for %s, the server answered about %s", hash, rec.Hash)
+	}
 	return rec, nil
 }
 
@@ -199,9 +202,11 @@ func (c *Client) AccountTx(account string) ([]xrpl.TxRecord, xrpl.Range, error) 
 			if raw == nil {
 				raw = t.TxJSON
 			}
+			// An entry that cannot be read is an error, not a skip: a
+			// thinned answer would read as "nothing found in this range".
 			rec, err := xrpl.ParseTxJSON(raw, t.Meta)
 			if err != nil {
-				continue
+				return nil, rng, fmt.Errorf("account_tx: a transaction entry cannot be read: %w", err)
 			}
 			rec.Validated = t.Validated
 			if rec.Hash == "" {
@@ -252,17 +257,20 @@ func (c *Client) AccountInfo(account string) (*xrpl.AccountState, error) {
 		return nil, err
 	}
 	var data struct {
-		Sequence uint32 `json:"Sequence"`
-		Balance  string `json:"Balance"`
+		Sequence *uint32 `json:"Sequence"`
+		Balance  string  `json:"Balance"`
 	}
 	if err := json.Unmarshal(res["account_data"], &data); err != nil {
 		return nil, fmt.Errorf("account_info: bad account_data: %w", err)
+	}
+	if data.Sequence == nil {
+		return nil, errors.New("account_info: no Sequence in account_data")
 	}
 	bal, err := drops("account_info: Balance", data.Balance)
 	if err != nil {
 		return nil, err
 	}
-	return &xrpl.AccountState{Sequence: data.Sequence, BalanceDrops: bal}, nil
+	return &xrpl.AccountState{Sequence: *data.Sequence, BalanceDrops: bal}, nil
 }
 
 // ServerInfo returns the validated ledger, history range, and fees.
