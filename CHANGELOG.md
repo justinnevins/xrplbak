@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Build: Go 1.27.4. govulncheck reports GO-2026-6859 in net/http for Go 1.27.3, fixed in 1.27.4, and finds calls into it from the rpc client. CI failed on it for the first time on 2026-11-11.
+- Fix: seven small items from the code audit.
+  - A wrapped key file with an unknown wrap version is refused by name. The version byte was never read.
+  - `tx` refuses an answer about another transaction. `account_info` refuses an answer without a Sequence. `account_tx` refuses an answer with an entry it cannot read, or a memo field that is not hex; such entries were skipped or shortened, so a damaged answer read as "nothing found".
+  - Fields inside `tx_json` no longer replace the fields beside it.
+  - After a batched submit, the DID entry read back must be the anchor the run sent. The dump took whatever the server answered.
+  - A junk memo that copies a manifest's id and nonce with another part count cannot hide that manifest by being listed first.
+  - A resumed `backup --submit` refuses (exit 3) a progress file it cannot read, and names it. The file was ignored and overwritten. The dump file is now written beside the target and renamed over it.
+  - `xrplbak.settings` is refused when group or others can write it.
+- Docs: a dry run with a saved server reads the account from that server. The README said nothing is sent; no transaction is.
 - CI runs staticcheck (pinned, through `go run`, so `go.mod` keeps zero requirements) and the test suite under the race detector on every pull request. The seven reports staticcheck had are fixed: the vendored Shamir code uses a local generator for share order where it called the deprecated `rand.Seed`, one error string changed its first words, and the rest are test code and comments. A weekly job proposes updates for the pinned GitHub Actions.
 - Fix: a stanza header line was never scanned and always went on-chain as written. A seed, a PEM marker, an address, an internal host name or a note written as `[name]` reached the on-chain ciphertext. A header is now scanned like any other line, and a stanza name may hold only letters, digits, `_` and `-`, at most 64. Any other name is refused (exit 3) with the line named. Every stanza rippled knows fits.
 - Fix: a byte order mark, a UTF-16 encoding or a non-ASCII space in front of a header hid that header from every rule. `[validation_seed]` behind a byte order mark was not refused, and its lines were handled as ordinary settings. rippled does not read such a header either. A config with a byte order mark, a NUL byte, or a header behind an invisible character is now refused (exit 3) with the fix named. An `--include` file in UTF-16 is scanned for key material too.

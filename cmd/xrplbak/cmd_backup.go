@@ -423,7 +423,11 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 	}
 	dumpPath := filepath.Join(out, p.Manifest.BackupID+".dump.json")
 	s := &backup.Submitter{Client: client, Writer: writer, Key: o.Key, MaxFee: maxFee, FeeWait: x.FeeWait, Sleep: submitSleep, DumpOut: dumpPath, Batch: useBatch, AttestMemo: attestMemo, DelegationMemo: delegMemo, Log: func(f string, a ...any) { fmt.Fprintf(stdout, "  "+f+"\n", a...) }}
-	if prev, err := dump.Load(dumpPath); err == nil && prev.BackupID == p.Manifest.BackupID {
+	prev, err := loadResume(dumpPath, p.Manifest.BackupID)
+	if err != nil {
+		return fail(exitRefused, "%v", err)
+	}
+	if prev != nil {
 		s.Dump = prev
 		fmt.Fprintf(stdout, "  resuming from %s (%d transaction(s) already validated)\n", dumpPath, len(prev.Txs))
 	}
@@ -639,4 +643,22 @@ func delegatedMemos(client xrpl.Client, account string, att *attestKey, delegSig
 		return nil, nil, fail(exitAuth, "this attestation would not verify (%s); nothing was submitted", f.Reason)
 	}
 	return deleg, &am, nil
+}
+
+// loadResume reads the progress file of an earlier run of this backup. No
+// file means a first run. A file that cannot be read, or that belongs to
+// another backup, is refused: starting over would overwrite it and send
+// again what the ledger may already hold.
+func loadResume(path, backupID string) (*dump.Dump, error) {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	prev, err := dump.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s is the progress file of an earlier run of this backup and cannot be read (%v). Nothing was sent. Move the file aside to start this backup over; transactions the earlier run sent stay on the ledger", path, err)
+	}
+	if prev.BackupID != backupID {
+		return nil, fmt.Errorf("%s holds backup %s, not this one. Nothing was sent. Move the file aside and retry", path, prev.BackupID)
+	}
+	return prev, nil
 }

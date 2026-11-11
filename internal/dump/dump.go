@@ -82,7 +82,16 @@ func (d *Dump) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	// Written beside the target and renamed over it, so a crash or a full
+	// disk leaves the previous file, never a cut-off one.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // Merge adds transactions from another dump for the same account.
