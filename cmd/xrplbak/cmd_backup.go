@@ -423,7 +423,7 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 	}
 	dumpPath := filepath.Join(out, p.Manifest.BackupID+".dump.json")
 	s := &backup.Submitter{Client: client, Writer: writer, Key: o.Key, MaxFee: maxFee, FeeWait: x.FeeWait, Sleep: submitSleep, DumpOut: dumpPath, Batch: useBatch, AttestMemo: attestMemo, DelegationMemo: delegMemo, Log: func(f string, a ...any) { fmt.Fprintf(stdout, "  "+f+"\n", a...) }}
-	if prev, err := dump.Load(dumpPath); err == nil && prev.BackupID == p.Manifest.BackupID {
+	if prev, _ := loadResume(dumpPath, p.Manifest.BackupID); prev != nil {
 		s.Dump = prev
 		fmt.Fprintf(stdout, "  resuming from %s (%d transaction(s) already validated)\n", dumpPath, len(prev.Txs))
 	}
@@ -639,4 +639,13 @@ func delegatedMemos(client xrpl.Client, account string, att *attestKey, delegSig
 		return nil, nil, fail(exitAuth, "this attestation would not verify (%s); nothing was submitted", f.Reason)
 	}
 	return deleg, &am, nil
+}
+
+// loadResume reads the progress file of an earlier run of this backup.
+func loadResume(path, backupID string) (*dump.Dump, error) {
+	prev, err := dump.Load(path)
+	if err == nil && prev.BackupID == backupID {
+		return prev, nil
+	}
+	return nil, nil
 }
