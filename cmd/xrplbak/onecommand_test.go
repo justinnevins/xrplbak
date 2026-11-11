@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/justinnevins/xrplbak/internal/backup"
+	"github.com/justinnevins/xrplbak/internal/testsupport/fake"
 	"github.com/justinnevins/xrplbak/internal/xrpl"
-	"github.com/justinnevins/xrplbak/internal/xrpl/fake"
 )
 
 // captureStdout runs f with stdout sent to a buffer.

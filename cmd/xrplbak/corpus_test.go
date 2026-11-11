@@ -30,8 +30,8 @@ import (
 	"github.com/justinnevins/xrplbak/internal/crypto"
 	"github.com/justinnevins/xrplbak/internal/dump"
 	"github.com/justinnevins/xrplbak/internal/manifest"
+	"github.com/justinnevins/xrplbak/internal/testsupport/fake"
 	"github.com/justinnevins/xrplbak/internal/xrpl"
-	"github.com/justinnevins/xrplbak/internal/xrpl/fake"
 	"github.com/justinnevins/xrplbak/internal/xrpl/sign"
 )
 
@@ -133,7 +133,7 @@ func (w *world) dumpFile(name string) string {
 		}
 		raw := map[string]any{"Account": rec.Account, "TransactionType": rec.TxType, "Sequence": rec.Sequence, "hash": rec.Hash, "ledger_index": rec.LedgerIndex, "validated": true}
 		if len(rec.Memos) > 0 {
-			raw["Memos"] = xrpl.MemosToJSON(rec.Memos)
+			raw["Memos"] = fake.MemosToJSON(rec.Memos)
 		}
 		b, _ := json.Marshal(raw)
 		d.Txs = append(d.Txs, dump.Tx{Hash: rec.Hash, LedgerIndex: rec.LedgerIndex, Result: rec.Result, TxJSON: b})

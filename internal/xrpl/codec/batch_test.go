@@ -1,8 +1,11 @@
-package codec
+package codec_test
 
 import (
 	"encoding/hex"
 	"testing"
+
+	"github.com/justinnevins/xrplbak/internal/testsupport/txdecode"
+	"github.com/justinnevins/xrplbak/internal/xrpl/codec"
 )
 
 // The Batch below validated on XRPL Devnet on 2026-09-17 as transaction
@@ -38,14 +41,14 @@ func TestBatchMatchesTheDevnetLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := Hash(blob); got != devnetBatchHash {
+	if got := codec.Hash(blob); got != devnetBatchHash {
 		t.Fatalf("outer hash %s, want %s", got, devnetBatchHash)
 	}
-	tx, err := Deserialize(blob)
+	tx, err := txdecode.Deserialize(blob)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tx.Type != TxBatch || tx.Flags != FlagAllOrNothing || len(tx.Inner) != 3 {
+	if tx.Type != codec.TxBatch || tx.Flags != codec.FlagAllOrNothing || len(tx.Inner) != 3 {
 		t.Fatalf("decoded type %d flags %#x inner %d", tx.Type, tx.Flags, len(tx.Inner))
 	}
 	if tx.FeeDrops != 50 || tx.Sequence != 5385543 {
@@ -58,7 +61,7 @@ func TestBatchMatchesTheDevnetLedger(t *testing.T) {
 		if in.Sequence != tx.Sequence+1+uint32(i) {
 			t.Fatalf("inner %d sequence %d, want %d", i, in.Sequence, tx.Sequence+1+uint32(i))
 		}
-		h, err := InnerHash(in)
+		h, err := codec.InnerHash(in)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,10 +69,10 @@ func TestBatchMatchesTheDevnetLedger(t *testing.T) {
 			t.Fatalf("inner %d hash %s, want %s (the hash Devnet reported)", i, h, devnetBatchInnerHashes[i])
 		}
 	}
-	if tx.Inner[0].Type != TxAccountSet || len(tx.Inner[0].Memos) != 1 || tx.Inner[2].Type != TxDIDSet || string(tx.Inner[2].Data) != "probe anchor" {
+	if tx.Inner[0].Type != codec.TxAccountSet || len(tx.Inner[0].Memos) != 1 || tx.Inner[2].Type != codec.TxDIDSet || string(tx.Inner[2].Data) != "probe anchor" {
 		t.Fatalf("inner shapes: %+v", tx.Inner)
 	}
-	again, err := Serialize(tx, true)
+	again, err := codec.Serialize(tx, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,8 +83,8 @@ func TestBatchMatchesTheDevnetLedger(t *testing.T) {
 
 func TestBatchSerializerRefusesWhatRippledRefuses(t *testing.T) {
 	blob, _ := hex.DecodeString(devnetBatchBlob)
-	good, _ := Deserialize(blob)
-	clone := func() *Tx {
+	good, _ := txdecode.Deserialize(blob)
+	clone := func() *codec.Tx {
 		c := *good
 		c.Inner = nil
 		for _, in := range good.Inner {
@@ -90,27 +93,27 @@ func TestBatchSerializerRefusesWhatRippledRefuses(t *testing.T) {
 		}
 		return &c
 	}
-	cases := map[string]func(*Tx){
-		"one inner": func(tx *Tx) { tx.Inner = tx.Inner[:1] },
-		"nine inners": func(tx *Tx) {
+	cases := map[string]func(*codec.Tx){
+		"one inner": func(tx *codec.Tx) { tx.Inner = tx.Inner[:1] },
+		"nine inners": func(tx *codec.Tx) {
 			for len(tx.Inner) < 9 {
 				tx.Inner = append(tx.Inner, tx.Inner[0])
 			}
 		},
-		"inner without flag": func(tx *Tx) { tx.Inner[0].Flags = 0 },
-		"inner without flag but with a key": func(tx *Tx) {
+		"inner without flag": func(tx *codec.Tx) { tx.Inner[0].Flags = 0 },
+		"inner without flag but with a key": func(tx *codec.Tx) {
 			tx.Inner[0].Flags = 0
 			tx.Inner[0].SigningPubKey = good.SigningPubKey
 		},
-		"inner with fee":       func(tx *Tx) { tx.Inner[0].FeeDrops = 1 },
-		"inner signed":         func(tx *Tx) { tx.Inner[0].SigningPubKey = good.SigningPubKey },
-		"nested batch":         func(tx *Tx) { tx.Inner[0].Type = TxBatch },
-		"inners on AccountSet": func(tx *Tx) { tx.Type = TxAccountSet },
+		"inner with fee":       func(tx *codec.Tx) { tx.Inner[0].FeeDrops = 1 },
+		"inner signed":         func(tx *codec.Tx) { tx.Inner[0].SigningPubKey = good.SigningPubKey },
+		"nested batch":         func(tx *codec.Tx) { tx.Inner[0].Type = codec.TxBatch },
+		"inners on AccountSet": func(tx *codec.Tx) { tx.Type = codec.TxAccountSet },
 	}
 	for name, mutate := range cases {
 		tx := clone()
 		mutate(tx)
-		if _, err := Serialize(tx, true); err == nil {
+		if _, err := codec.Serialize(tx, true); err == nil {
 			t.Errorf("%s: serialized without error", name)
 		}
 	}

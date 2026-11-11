@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/justinnevins/xrplbak/internal/xrpl/codec"
 )
@@ -147,17 +146,4 @@ func ParseTxJSON(raw json.RawMessage, meta json.RawMessage) (*TxRecord, error) {
 		}
 	}
 	return r, nil
-}
-
-// MemosToJSON renders memos the way the JSON API expects (upper hex).
-func MemosToJSON(memos []codec.Memo) []map[string]map[string]string {
-	var out []map[string]map[string]string
-	for _, m := range memos {
-		e := map[string]string{"MemoType": strings.ToUpper(hex.EncodeToString(m.Type)), "MemoData": strings.ToUpper(hex.EncodeToString(m.Data))}
-		if len(m.Format) > 0 {
-			e["MemoFormat"] = strings.ToUpper(hex.EncodeToString(m.Format))
-		}
-		out = append(out, map[string]map[string]string{"Memo": e})
-	}
-	return out
 }

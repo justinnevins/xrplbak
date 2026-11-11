@@ -1,6 +1,11 @@
-package cfg
+package cfg_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/justinnevins/xrplbak/internal/cfg"
+	"github.com/justinnevins/xrplbak/internal/testsupport/cfgtest"
+)
 
 // FuzzCanonicalIsFixedPoint asserts that canonical form is stable. Parsing
 // canonical text and rendering it again must return the same bytes. Every
@@ -15,8 +20,8 @@ func FuzzCanonicalIsFixedPoint(f *testing.F) {
 	f.Add("")
 	f.Add("[]\n\n[ ]\nvalue\n")
 	f.Fuzz(func(t *testing.T, text string) {
-		once := Parse(text).Canonical()
-		twice := Parse(once).Canonical()
+		once := cfgtest.Canonical(cfg.Parse(text))
+		twice := cfgtest.Canonical(cfg.Parse(once))
 		if once != twice {
 			t.Fatalf("canonical form drifted on the second pass:\n%q\n%q", once, twice)
 		}
@@ -29,14 +34,14 @@ func FuzzCanonicalIsFixedPoint(f *testing.F) {
 // recover, so the same config hashed two different ways.
 func TestCanonicalDropsEmptyNamelessStanza(t *testing.T) {
 	for _, text := range []string{"[]\n[0]\n", "[ ]\n", "[]\n"} {
-		once := Parse(text).Canonical()
-		twice := Parse(once).Canonical()
+		once := cfgtest.Canonical(cfg.Parse(text))
+		twice := cfgtest.Canonical(cfg.Parse(once))
 		if once != twice {
 			t.Fatalf("%q: canonical form drifted:\n%q\n%q", text, once, twice)
 		}
 	}
 	// A nameless stanza that carries lines still keeps them.
-	if got := Parse("value\n[a]\nx\n").Canonical(); got != "value\n\n[a]\nx\n" {
+	if got := cfgtest.Canonical(cfg.Parse("value\n[a]\nx\n")); got != "value\n\n[a]\nx\n" {
 		t.Fatalf("nameless stanza lost its lines: %q", got)
 	}
 }
@@ -50,7 +55,7 @@ func TestCanonicalDropsEmptyNamelessStanza(t *testing.T) {
 // stanza the operator's node does not have. The assertion is corrected here
 // rather than deleted, and the fixed-point cases it carried are kept.
 func TestHeaderWithTrailingComment(t *testing.T) {
-	f := Parse("[server] # the ports\nport_rpc\n")
+	f := cfg.Parse("[server] # the ports\nport_rpc\n")
 	if len(f.Stanzas) != 1 || f.Stanzas[0].Name != "" {
 		t.Fatalf("a commented header must not open a stanza: %+v", f.Stanzas[0])
 	}
@@ -59,12 +64,12 @@ func TestHeaderWithTrailingComment(t *testing.T) {
 	}
 	// The raw line is kept because stripping its comment would leave
 	// "[server]", which the next parse would read as a header.
-	if got := f.Canonical(); got != "[server] # the ports\nport_rpc\n" {
+	if got := cfgtest.Canonical(f); got != "[server] # the ports\nport_rpc\n" {
 		t.Fatalf("canonical: %q", got)
 	}
 	for _, text := range []string{"[] #", "[a] # c\nx\n", "[a]#c\n"} {
-		once := Parse(text).Canonical()
-		if twice := Parse(once).Canonical(); once != twice {
+		once := cfgtest.Canonical(cfg.Parse(text))
+		if twice := cfgtest.Canonical(cfg.Parse(once)); once != twice {
 			t.Fatalf("%q: canonical form drifted:\n%q\n%q", text, once, twice)
 		}
 	}

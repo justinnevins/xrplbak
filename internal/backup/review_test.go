@@ -18,6 +18,7 @@ import (
 	"github.com/justinnevins/xrplbak/internal/manifest"
 	"github.com/justinnevins/xrplbak/internal/redact"
 	"github.com/justinnevins/xrplbak/internal/restore"
+	"github.com/justinnevins/xrplbak/internal/testsupport/cfgtest"
 	"github.com/justinnevins/xrplbak/internal/xrpl/codec"
 )
 
@@ -111,7 +112,7 @@ func TestRedactPortCredentialsAndSeedInValidators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	on := res.OnChain.Canonical()
+	on := cfgtest.Canonical(res.OnChain)
 	for _, bad := range []string{"hunter2", "password = p", "/etc/k.pem"} {
 		if strings.Contains(on, bad) {
 			t.Fatalf("%q leaked on-chain:\n%s", bad, on)
@@ -160,9 +161,9 @@ func TestDuplicateStanzasMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	merged := redact.Merge(cfg.Parse(res.OnChain.Canonical()), cfg.Parse(res.Bundle.Canonical()))
-	if merged.Canonical() != f.Canonical() || !strings.Contains(merged.Canonical(), "10.0.0.2") {
-		t.Fatalf("merge lost lines:\n%s", merged.Canonical())
+	merged := redact.Merge(cfg.Parse(cfgtest.Canonical(res.OnChain)), cfg.Parse(cfgtest.Canonical(res.Bundle)))
+	if cfgtest.Canonical(merged) != cfgtest.Canonical(f) || !strings.Contains(cfgtest.Canonical(merged), "10.0.0.2") {
+		t.Fatalf("merge lost lines:\n%s", cfgtest.Canonical(merged))
 	}
 }
 

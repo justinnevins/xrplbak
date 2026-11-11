@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/justinnevins/xrplbak/internal/testsupport/fake"
 	"github.com/justinnevins/xrplbak/internal/xrpl"
-	"github.com/justinnevins/xrplbak/internal/xrpl/fake"
 )
 
 // spikyLedger reports a high open-ledger fee for the first `high` reads of

@@ -11,7 +11,7 @@ import (
 	"github.com/justinnevins/xrplbak/internal/discover"
 	"github.com/justinnevins/xrplbak/internal/dump"
 	"github.com/justinnevins/xrplbak/internal/restore"
-	"github.com/justinnevins/xrplbak/internal/xrpl"
+	"github.com/justinnevins/xrplbak/internal/testsupport/fake"
 )
 
 // forgedDump returns a dump for backup b whose one record is a real
@@ -34,7 +34,7 @@ func forgedDump(t *testing.T, e *env, a, b *Plan, aDump *dump.Dump, all bool) *d
 		if in, ok := top["tx_json"].(map[string]any); ok {
 			body = in
 		}
-		body["Memos"] = xrpl.MemosToJSON(b.ChunkMemos[:1])
+		body["Memos"] = fake.MemosToJSON(b.ChunkMemos[:1])
 		raw, err := json.Marshal(top)
 		if err != nil {
 			t.Fatal(err)

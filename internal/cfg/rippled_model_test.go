@@ -1,9 +1,12 @@
-package cfg
+package cfg_test
 
 import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/justinnevins/xrplbak/internal/cfg"
+	"github.com/justinnevins/xrplbak/internal/testsupport/cfgtest"
 )
 
 // This file pins xrplbak's reading of a config against rippled's own, read
@@ -121,14 +124,14 @@ func FuzzRippledReadingSurvivesCanonical(f *testing.F) {
 	f.Add("\u00a0[a]\nx\u00a0\n")
 	f.Add("[a]\nx\u0085\n")
 	f.Fuzz(func(t *testing.T, text string) {
-		if strings.Contains(text, MarkerPrefix) {
+		if strings.Contains(text, cfg.MarkerPrefix) {
 			t.Skip()
 		}
 		want := rippledSections(text)
-		got := rippledSections(Parse(text).Canonical())
+		got := rippledSections(cfgtest.Canonical(cfg.Parse(text)))
 		if !reflect.DeepEqual(want, got) {
 			t.Fatalf("rippled reads the stored config differently:\ninput  %q\nstored %q\nwant   %v\ngot    %v",
-				text, Parse(text).Canonical(), want, got)
+				text, cfgtest.Canonical(cfg.Parse(text)), want, got)
 		}
 	})
 }
@@ -149,10 +152,10 @@ func TestInlineCommentFormsMatchRippled(t *testing.T) {
 		"[a] # c\nx\n",
 	} {
 		want := rippledSections(text)
-		got := rippledSections(Parse(text).Canonical())
+		got := rippledSections(cfgtest.Canonical(cfg.Parse(text)))
 		if !reflect.DeepEqual(want, got) {
 			t.Errorf("%q: rippled reads the stored config differently\nwant %v\ngot  %v\nstored %q",
-				text, want, got, Parse(text).Canonical())
+				text, want, got, cfgtest.Canonical(cfg.Parse(text)))
 		}
 	}
 }
@@ -165,7 +168,7 @@ func TestInlineCommentFormsMatchRippled(t *testing.T) {
 // operator's node uses, and redaction decides what may go on a public ledger
 // per section.
 func TestHeaderTestUsesRawLine(t *testing.T) {
-	f := Parse("[validator_token]\nABCD\n[ips] # peers\nEFGH\n")
+	f := cfg.Parse("[validator_token]\nABCD\n[ips] # peers\nEFGH\n")
 	if len(f.Stanzas) != 1 || f.Stanzas[0].Name != "validator_token" {
 		names := []string{}
 		for _, s := range f.Stanzas {
@@ -182,7 +185,7 @@ func TestHeaderTestUsesRawLine(t *testing.T) {
 // parser missed: rippled converts "\r\n" to "\n" and then any remaining
 // "\r" to "\n", so a classic Mac ending separates lines there too.
 func TestLoneCarriageReturnEndsALine(t *testing.T) {
-	f := Parse("[a]\rx\r[b]\ry\r")
+	f := cfg.Parse("[a]\rx\r[b]\ry\r")
 	if len(f.Stanzas) != 2 {
 		t.Fatalf("stanzas: %d, want 2", len(f.Stanzas))
 	}
@@ -197,7 +200,7 @@ func TestLoneCarriageReturnEndsALine(t *testing.T) {
 // the name let a stanza rippled ignores be matched against the on-chain
 // allowlist and published.
 func TestStanzaNameIsNotTrimmed(t *testing.T) {
-	f := Parse("[ ips ]\nhost 51235\n")
+	f := cfg.Parse("[ ips ]\nhost 51235\n")
 	if len(f.Stanzas) != 1 || f.Stanzas[0].Name != " ips " {
 		t.Fatalf("stanza name: %q, want %q", f.Stanzas[0].Name, " ips ")
 	}
@@ -214,27 +217,27 @@ func TestTrimIsAsciiOnly(t *testing.T) {
 	const nbsp = "\u00a0"
 
 	// A no-break space is part of the value, not padding around it.
-	f := Parse("[a]\nx" + nbsp + "\n")
+	f := cfg.Parse("[a]\nx" + nbsp + "\n")
 	if got := f.Stanzas[0].Lines[0]; got != "x"+nbsp {
 		t.Errorf("trailing U+00A0 was trimmed from a value: %q", got)
 	}
 
 	// A line starting with a no-break space does not start with "[", so
 	// rippled does not read it as a header.
-	f = Parse(nbsp + "[a]\nx\n")
+	f = cfg.Parse(nbsp + "[a]\nx\n")
 	if len(f.Stanzas) != 1 || f.Stanzas[0].Name != "" {
 		t.Errorf("U+00A0 before a bracket opened a stanza: %+v", f.Stanzas[0])
 	}
 
 	// U+0085 is the other codepoint the two definitions disagree about.
-	f = Parse("[a]\nx\u0085\n")
+	f = cfg.Parse("[a]\nx\u0085\n")
 	if got := f.Stanzas[0].Lines[0]; got != "x\u0085" {
 		t.Errorf("trailing U+0085 was trimmed from a value: %q", got)
 	}
 
 	for _, text := range []string{"[a]\nx" + nbsp + "\n", nbsp + "[a]\nx\n", "[a]\nx\u0085\n"} {
 		want := rippledSections(text)
-		got := rippledSections(Parse(text).Canonical())
+		got := rippledSections(cfgtest.Canonical(cfg.Parse(text)))
 		if !reflect.DeepEqual(want, got) {
 			t.Errorf("%q: rippled reads the stored config differently\nwant %v\ngot  %v", text, want, got)
 		}

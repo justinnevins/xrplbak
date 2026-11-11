@@ -778,8 +778,3 @@ func NextSeq(c xrpl.Client, key *crypto.KeyFile, account string) (seq uint32, su
 	}
 	return res.Latest.Manifest.Seq + 1, res.Latest.Manifest.BackupID, warns, nil
 }
-
-// chunkTx builds the carrier transaction for chunk i. Exposed for tests.
-func chunkTx(p *Plan, i int) *codec.Tx {
-	return &codec.Tx{Type: codec.TxAccountSet, Memos: []codec.Memo{p.ChunkMemos[i]}}
-}

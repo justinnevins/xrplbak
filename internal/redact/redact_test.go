@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/justinnevins/xrplbak/internal/cfg"
+	"github.com/justinnevins/xrplbak/internal/testsupport/cfgtest"
 )
 
 func load(t *testing.T, name string) *cfg.File {
@@ -144,7 +145,7 @@ func TestMergeRoundTrip(t *testing.T) {
 }
 
 func TestCanonicalDeterministic(t *testing.T) {
-	a := cfg.Parse("[b]\n1\n\n[a]\nx # comment\n# c\n").Canonical()
+	a := cfgtest.Canonical(cfg.Parse("[b]\n1\n\n[a]\nx # comment\n# c\n"))
 	if a != "[a]\nx\n\n[b]\n1\n" {
 		t.Fatalf("%q", a)
 	}
@@ -231,7 +232,7 @@ func TestEmptyStanzaRoundTrips(t *testing.T) {
 		}
 		merged := Merge(cfg.Parse(res.OnChain.Render()), cfg.Parse(res.Bundle.Render()))
 		if merged.Render() != orig.Render() {
-			t.Fatalf("%q: round trip mismatch:\nwant %q\ngot  %q", text, orig.Canonical(), merged.Canonical())
+			t.Fatalf("%q: round trip mismatch:\nwant %q\ngot  %q", text, cfgtest.Canonical(orig), cfgtest.Canonical(merged))
 		}
 	}
 }
