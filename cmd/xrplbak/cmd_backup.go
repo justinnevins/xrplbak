@@ -13,6 +13,7 @@ import (
 
 	"github.com/justinnevins/xrplbak/internal/backup"
 	"github.com/justinnevins/xrplbak/internal/cfg"
+	"github.com/justinnevins/xrplbak/internal/crypto"
 	"github.com/justinnevins/xrplbak/internal/dump"
 	"github.com/justinnevins/xrplbak/internal/pubattest"
 	"github.com/justinnevins/xrplbak/internal/redact"
@@ -85,212 +86,297 @@ func cmdRedact(args []string) error {
 	return nil
 }
 
-func cmdBackup(args []string) error {
-	fs := newFlags("backup", "plan a backup; --submit writes it to the ledger")
-	config := fs.String("config", "", "path to xrpld.cfg or rippled.cfg (default: auto-detect)")
-	validators := fs.String("validators", "", "path to validators.txt (default: from [validators_file] or beside the config)")
-	var includes multiFlag
-	fs.Var(&includes, "include", "extra file for the off-chain bundle (repeatable). Key material is refused")
-	key := fs.String("key", "", "path to xrplbak.key (default: next to the config, then ./xrplbak.key)")
-	keyPass := fs.Bool("key-passphrase", false, "prompt for the key file passphrase")
-	out := fs.String("out", "xrplbak-out", "directory for the bundle, dump, and report")
-	rpcURL := fs.String("rpc", "", "XRPL JSON-RPC URL, or mainnet / testnet / devnet")
-	submit := fs.Bool("submit", false, "actually submit transactions (default is a dry run). Asks before submitting; pass --yes to answer up front")
-	yes := fs.Bool("yes", false, "answer the submit confirmation with yes, for scripts")
-	maxFee := fs.Uint64("max-fee", defaultMaxFee, "abort if the network fee per transaction exceeds this many drops")
-	feeWait := fs.Duration("fee-wait", 10*time.Minute, "with --submit: while the network fee is above --max-fee, wait this long for it to fall before giving up (0 gives up at once)")
-	save := fs.Bool("save", false, "with --submit: after the backup lands, save --rpc, --max-fee, --comments and --peers to "+settingsName+" beside the key file, so the next run needs only --submit")
-	noSettings := fs.Bool("no-settings", false, "ignore "+settingsName)
-	noReadBack := fs.Bool("no-readback", false, "with --submit: skip reading the new backup back from the ledger")
-	tombstone := fs.Bool("tombstone", false, "publish a tombstone that marks earlier backups as retired")
-	deleteAnchor := fs.Bool("delete-anchor", false, "with --tombstone only: also delete the DID entry (frees 0.2 XRP)")
-	forceSeq := fs.Bool("force-seq", false, "submit even when existing backups could not be read (risks a duplicate seq)")
-	vpk := fs.String("validator-key", "", "validator public key (nHB...) to label this backup with; stored only as a hash inside the ciphertext, for your records, and not checked by verify or restore")
-	attest := fs.String("attestation", "", "removed in v1.1.6; use --attest")
-	attestVPK := fs.String("attestation-key", "", "removed in v1.1.6; use --attest")
-	comments := fs.String("comments", "bundle", commentsFlagHelp)
-	peers := fs.String("peers", "bundle", peersFlagHelp)
-	batch := fs.String("batch", "auto", batchFlagHelp)
-	attestPubKey := fs.String("attest-public-key", "", "advanced: sign each public attestation with the validator master key itself (nHB..., ed25519). Most operators want --attest, which keeps the master key offline")
-	attestPubSig := fs.String("attest-public-sig", "", "hex signature over the public attest string, made offline with validator-keys sign")
-	attestDelegated := fs.Bool("attest", false, "publish a public attestation that this validator backs up, signed by the delegated attestation key (see xrplbak attest-key); the master key stays offline")
-	attestKeyPath := fs.String("attest-key", "", "attestation key file (default: "+attestKeyName+" beside xrplbak.key)")
-	delegSig := fs.String("attest-delegation-sig", "", "with --attest: the master key's hex signature over the delegation string, to publish the delegation with this backup")
-	if err := fs.Parse(args); err != nil {
-		return parseError(err)
-	}
+// backupFlags holds the parsed command line of xrplbak backup. set names the
+// flags given on the command line, so saved settings fill in only the rest.
+type backupFlags struct {
+	config, validators, key, out, rpcURL    string
+	includes                                multiFlag
+	keyPass, submit, yes, save, noSettings  bool
+	noReadBack, tombstone, deleteAnchor     bool
+	forceSeq, attestDelegated               bool
+	maxFee                                  uint64
+	feeWait                                 time.Duration
+	vpk, attest, attestVPK, comments, peers string
+	batch, attestPubKey, attestPubSig       string
+	attestKeyPath, delegSig                 string
+	set                                     map[string]bool
+}
 
-	set := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	if *feeWait < 0 {
-		return fail(exitUsage, "--fee-wait must be zero or more, not %s", *feeWait)
+func cmdBackup(args []string) error {
+	f, err := parseBackupFlags(args)
+	if f == nil {
+		// Parsing stopped: a usage error, or nil after -h printed the help.
+		return err
 	}
-	if *save && !*submit {
+	if err := checkBackupFlags(f); err != nil {
+		return err
+	}
+	cfgPath, err := findConfig(f.config)
+	if err != nil {
+		return err
+	}
+	keyPath, err := findKeyFile(f.key, cfgPath)
+	if err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(filepath.Dir(keyPath), settingsName)
+	settingsExist, savedOnchain, err := applySettings(f, settingsPath)
+	if err != nil {
+		return err
+	}
+	mode, peersOn, err := backupModes(f, savedOnchain, settingsPath)
+	if err != nil {
+		return err
+	}
+	kf, writer, err := loadWriter(keyPath, f.keyPass)
+	if err != nil {
+		return err
+	}
+	o, att, err := backupOptions(f, cfgPath, keyPath, kf, mode, peersOn)
+	if err != nil {
+		return err
+	}
+	return runBackup(f, o, att, kf, writer, keyPath, settingsPath, settingsExist)
+}
+
+// parseBackupFlags defines and parses the backup flags. It returns nil flags
+// when parsing stops, with the error cmdBackup returns (nil after -h).
+func parseBackupFlags(args []string) (*backupFlags, error) {
+	fs := newFlags("backup", "plan a backup; --submit writes it to the ledger")
+	f := &backupFlags{}
+	fs.StringVar(&f.config, "config", "", "path to xrpld.cfg or rippled.cfg (default: auto-detect)")
+	fs.StringVar(&f.validators, "validators", "", "path to validators.txt (default: from [validators_file] or beside the config)")
+	fs.Var(&f.includes, "include", "extra file for the off-chain bundle (repeatable). Key material is refused")
+	fs.StringVar(&f.key, "key", "", "path to xrplbak.key (default: next to the config, then ./xrplbak.key)")
+	fs.BoolVar(&f.keyPass, "key-passphrase", false, "prompt for the key file passphrase")
+	fs.StringVar(&f.out, "out", "xrplbak-out", "directory for the bundle, dump, and report")
+	fs.StringVar(&f.rpcURL, "rpc", "", "XRPL JSON-RPC URL, or mainnet / testnet / devnet")
+	fs.BoolVar(&f.submit, "submit", false, "actually submit transactions (default is a dry run). Asks before submitting; pass --yes to answer up front")
+	fs.BoolVar(&f.yes, "yes", false, "answer the submit confirmation with yes, for scripts")
+	fs.Uint64Var(&f.maxFee, "max-fee", defaultMaxFee, "abort if the network fee per transaction exceeds this many drops")
+	fs.DurationVar(&f.feeWait, "fee-wait", 10*time.Minute, "with --submit: while the network fee is above --max-fee, wait this long for it to fall before giving up (0 gives up at once)")
+	fs.BoolVar(&f.save, "save", false, "with --submit: after the backup lands, save --rpc, --max-fee, --comments and --peers to "+settingsName+" beside the key file, so the next run needs only --submit")
+	fs.BoolVar(&f.noSettings, "no-settings", false, "ignore "+settingsName)
+	fs.BoolVar(&f.noReadBack, "no-readback", false, "with --submit: skip reading the new backup back from the ledger")
+	fs.BoolVar(&f.tombstone, "tombstone", false, "publish a tombstone that marks earlier backups as retired")
+	fs.BoolVar(&f.deleteAnchor, "delete-anchor", false, "with --tombstone only: also delete the DID entry (frees 0.2 XRP)")
+	fs.BoolVar(&f.forceSeq, "force-seq", false, "submit even when existing backups could not be read (risks a duplicate seq)")
+	fs.StringVar(&f.vpk, "validator-key", "", "validator public key (nHB...) to label this backup with; stored only as a hash inside the ciphertext, for your records, and not checked by verify or restore")
+	fs.StringVar(&f.attest, "attestation", "", "removed in v1.1.6; use --attest")
+	fs.StringVar(&f.attestVPK, "attestation-key", "", "removed in v1.1.6; use --attest")
+	fs.StringVar(&f.comments, "comments", "bundle", commentsFlagHelp)
+	fs.StringVar(&f.peers, "peers", "bundle", peersFlagHelp)
+	fs.StringVar(&f.batch, "batch", "auto", batchFlagHelp)
+	fs.StringVar(&f.attestPubKey, "attest-public-key", "", "advanced: sign each public attestation with the validator master key itself (nHB..., ed25519). Most operators want --attest, which keeps the master key offline")
+	fs.StringVar(&f.attestPubSig, "attest-public-sig", "", "hex signature over the public attest string, made offline with validator-keys sign")
+	fs.BoolVar(&f.attestDelegated, "attest", false, "publish a public attestation that this validator backs up, signed by the delegated attestation key (see xrplbak attest-key); the master key stays offline")
+	fs.StringVar(&f.attestKeyPath, "attest-key", "", "attestation key file (default: "+attestKeyName+" beside xrplbak.key)")
+	fs.StringVar(&f.delegSig, "attest-delegation-sig", "", "with --attest: the master key's hex signature over the delegation string, to publish the delegation with this backup")
+	if err := fs.Parse(args); err != nil {
+		return nil, parseError(err)
+	}
+	f.set = map[string]bool{}
+	fs.Visit(func(fl *flag.Flag) { f.set[fl.Name] = true })
+	return f, nil
+}
+
+// checkBackupFlags refuses flag values and combinations that cannot work,
+// before any file is read.
+func checkBackupFlags(f *backupFlags) error {
+	if f.feeWait < 0 {
+		return fail(exitUsage, "--fee-wait must be zero or more, not %s", f.feeWait)
+	}
+	if f.save && !f.submit {
 		return fail(exitUsage, "--save needs --submit: settings are saved only after a backup lands")
 	}
-	if *save && *noSettings {
+	if f.save && f.noSettings {
 		return fail(exitUsage, "choose one: --save or --no-settings")
 	}
-	for name, v := range map[string]string{"comments": *comments, "peers": *peers} {
+	for name, v := range map[string]string{"comments": f.comments, "peers": f.peers} {
 		if v != "bundle" && v != "onchain" {
 			return fail(exitUsage, "--%s must be bundle or onchain, not %q", name, v)
 		}
 	}
-	switch *batch {
+	switch f.batch {
 	case "auto", "on", "off":
 	default:
-		return fail(exitUsage, "--batch must be auto, on or off, not %q", *batch)
+		return fail(exitUsage, "--batch must be auto, on or off, not %q", f.batch)
 	}
-	if *deleteAnchor && !*tombstone {
+	if f.deleteAnchor && !f.tombstone {
 		return fail(exitUsage, "--delete-anchor needs --tombstone")
 	}
-	if *tombstone && len(includes) > 0 {
+	if f.tombstone && len(f.includes) > 0 {
 		return fail(exitUsage, "--tombstone stores no files; drop --include")
 	}
-	if *tombstone && (*attestDelegated || *attestPubKey != "" || *attestPubSig != "" || *attest != "" || *attestVPK != "" || *delegSig != "") {
+	if f.tombstone && (f.attestDelegated || f.attestPubKey != "" || f.attestPubSig != "" || f.attest != "" || f.attestVPK != "" || f.delegSig != "") {
 		return fail(exitUsage, "a tombstone carries no attestation; drop --attest, --attest-public-key and --attestation")
 	}
-	if *delegSig != "" && !*attestDelegated {
+	return checkAttestFlags(f)
+}
+
+// checkAttestFlags refuses attestation flag combinations that cannot work.
+func checkAttestFlags(f *backupFlags) error {
+	if f.delegSig != "" && !f.attestDelegated {
 		return fail(exitUsage, "--attest-delegation-sig needs --attest")
 	}
-	if *attestDelegated && *attestPubKey != "" {
+	if f.attestDelegated && f.attestPubKey != "" {
 		return fail(exitUsage, "choose one: --attest (delegated key, the default) or --attest-public-key (sign each backup with the master key)")
 	}
-	if (*attestPubSig != "") && (*attestPubKey == "") {
+	if (f.attestPubSig != "") && (f.attestPubKey == "") {
 		return fail(exitUsage, "--attest-public-sig needs --attest-public-key")
 	}
-	if *attestPubKey != "" {
-		pub, err := sign.DecodeNodePublic(*attestPubKey)
+	if f.attestPubKey != "" {
+		pub, err := sign.DecodeNodePublic(f.attestPubKey)
 		if err != nil {
 			return err
 		}
 		if len(pub) != 33 || pub[0] != 0xED {
 			return fail(exitUsage, "--attest-public-key must be an ed25519 validator key (nHB...); secp256k1 keys are not supported in v1")
 		}
-		if *attestPubSig != "" {
-			if b, err := hex.DecodeString(*attestPubSig); err != nil || len(b) != 64 {
+		if f.attestPubSig != "" {
+			if b, err := hex.DecodeString(f.attestPubSig); err != nil || len(b) != 64 {
 				return fail(exitUsage, "--attest-public-sig must be 64 bytes of hex")
 			}
 		}
 	}
-	cfgPath, err := findConfig(*config)
-	if err != nil {
-		return err
-	}
-	keyPath, err := findKeyFile(*key, cfgPath)
-	if err != nil {
-		return err
-	}
-	// Saved choices fill in what the command line left out.
-	settingsPath := filepath.Join(filepath.Dir(keyPath), settingsName)
-	saved, settingsExist := &settings{}, false
-	if !*noSettings {
-		if saved, settingsExist, err = loadSettings(settingsPath); err != nil {
-			return fail(exitUsage, "%s: %v. Fix the file, or pass --no-settings to ignore it", settingsPath, err)
+	return nil
+}
+
+// applySettings fills in, from the saved settings file, what the command
+// line left out. savedOnchain names each on-chain choice that came from the
+// file.
+func applySettings(f *backupFlags, settingsPath string) (exist bool, savedOnchain map[string]bool, err error) {
+	saved := &settings{}
+	if !f.noSettings {
+		if saved, exist, err = loadSettings(settingsPath); err != nil {
+			return false, nil, fail(exitUsage, "%s: %v. Fix the file, or pass --no-settings to ignore it", settingsPath, err)
 		}
 	}
-	if !set["rpc"] && saved.RPC != "" {
-		*rpcURL = saved.RPC
+	if !f.set["rpc"] && saved.RPC != "" {
+		f.rpcURL = saved.RPC
 	}
-	if !set["max-fee"] && saved.MaxFee != 0 {
-		*maxFee = saved.MaxFee
+	if !f.set["max-fee"] && saved.MaxFee != 0 {
+		f.maxFee = saved.MaxFee
 	}
-	savedOnchain := map[string]bool{}
-	if !set["comments"] && saved.Comments != "" {
-		*comments = saved.Comments
+	savedOnchain = map[string]bool{}
+	if !f.set["comments"] && saved.Comments != "" {
+		f.comments = saved.Comments
 		savedOnchain["comments"] = saved.Comments == "onchain"
 	}
-	if !set["peers"] && saved.Peers != "" {
-		*peers = saved.Peers
+	if !f.set["peers"] && saved.Peers != "" {
+		f.peers = saved.Peers
 		savedOnchain["peers"] = saved.Peers == "onchain"
 	}
+	return exist, savedOnchain, nil
+}
+
+// backupModes resolves --comments and --peers, asking for the typed
+// confirmation an on-chain choice needs.
+func backupModes(f *backupFlags, savedOnchain map[string]bool, settingsPath string) (redact.Mode, bool, error) {
 	// An on-chain choice read from the file was typed and acknowledged in
 	// the run that saved it, so it is not asked again. It is named instead.
-	mode, err := commentsMode(*comments, !savedOnchain["comments"])
+	mode, err := commentsMode(f.comments, !savedOnchain["comments"])
 	if err != nil {
-		return err
+		return mode, false, err
 	}
 	if savedOnchain["comments"] {
 		fmt.Fprintf(stdout, "  comments: on-chain (saved in %s)\n", settingsPath)
 	}
-	peersOn, err := peersMode(*peers, !savedOnchain["peers"])
+	peersOn, err := peersMode(f.peers, !savedOnchain["peers"])
 	if err != nil {
-		return err
+		return mode, false, err
 	}
 	if savedOnchain["peers"] {
 		fmt.Fprintf(stdout, "  peers: on-chain (saved in %s)\n", settingsPath)
 	}
-	kf, err := loadKeyFile(keyPath, *keyPass)
+	return mode, peersOn, nil
+}
+
+// loadWriter opens the key file and checks that its writer seed matches the
+// stored account.
+func loadWriter(keyPath string, keyPass bool) (*crypto.KeyFile, *sign.Key, error) {
+	kf, err := loadKeyFile(keyPath, keyPass)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	writer, err := sign.KeyFromSeed(kf.WriterSeed[:])
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if writer.AccountID() == nil || sign.EncodeAddress(kf.AccountID[:]) != writer.Address() {
-		return fail(exitAuth, "key file is inconsistent: writer seed does not match the stored account")
+		return nil, nil, fail(exitAuth, "key file is inconsistent: writer seed does not match the stored account")
 	}
-	valPath, err := findValidators(*validators, cfgPath)
+	return kf, writer, nil
+}
+
+// backupOptions builds the backup plan options and loads the delegated
+// attestation key when --attest is given.
+func backupOptions(f *backupFlags, cfgPath, keyPath string, kf *crypto.KeyFile, mode redact.Mode, peersOn bool) (backup.Options, *attestKey, error) {
+	valPath, err := findValidators(f.validators, cfgPath)
 	if err != nil {
-		return err
+		return backup.Options{}, nil, err
 	}
 	var att *attestKey
-	if *attestDelegated {
-		p := *attestKeyPath
+	if f.attestDelegated {
+		p := f.attestKeyPath
 		if p == "" {
 			p = filepath.Join(filepath.Dir(keyPath), attestKeyName)
 		}
 		if att, err = loadAttestKey(p); err != nil {
-			return err
+			return backup.Options{}, nil, err
 		}
 	}
-	o := backup.Options{ConfigPath: cfgPath, ValidatorsPath: valPath, Includes: includes, Key: kf, Tombstone: *tombstone, Seq: 1, Comments: mode, PeersOnChain: peersOn, AttestPublicVPK: *attestPubKey}
-	if *vpk != "" {
-		pub, err := sign.DecodeNodePublic(*vpk)
+	o := backup.Options{ConfigPath: cfgPath, ValidatorsPath: valPath, Includes: f.includes, Key: kf, Tombstone: f.tombstone, Seq: 1, Comments: mode, PeersOnChain: peersOn, AttestPublicVPK: f.attestPubKey}
+	if f.vpk != "" {
+		pub, err := sign.DecodeNodePublic(f.vpk)
 		if err != nil {
-			return err
+			return backup.Options{}, nil, err
 		}
 		sum := sha256.Sum256(pub)
 		o.VPKSHA256 = hex.EncodeToString(sum[:])
 	}
-	if *attest != "" || *attestVPK != "" {
+	if f.attest != "" || f.attestVPK != "" {
 		// The team attestation sat inside the encrypted manifest, so only a
 		// holder of the recovery words could check it, and it was published
 		// without being checked (F-064). The public attestation does the job.
-		return fail(exitUsage, "--attestation and --attestation-key were removed in v1.1.6. Use --attest for a public attestation (see xrplbak attest-key). Backups made with them still verify")
+		return backup.Options{}, nil, fail(exitUsage, "--attestation and --attestation-key were removed in v1.1.6. Use --attest for a public attestation (see xrplbak attest-key). Backups made with them still verify")
 	}
+	return o, att, nil
+}
 
+// runBackup binds the plan to the ledger when an RPC server is named, then
+// submits with --submit or prints the dry run.
+func runBackup(f *backupFlags, o backup.Options, att *attestKey, kf *crypto.KeyFile, writer *sign.Key, keyPath, settingsPath string, settingsExist bool) error {
 	var warns []string
-	if *submit || *rpcURL != "" {
-		client, source, err := openClient(*rpcURL, "")
+	if f.submit || f.rpcURL != "" {
+		client, source, err := openClient(f.rpcURL, "")
 		if err != nil {
 			return err
 		}
 		var seqErr error
 		warns, seqErr = bindPlan(&o, client, kf, writer.Address())
-		if *submit {
+		if f.submit {
 			if errors.Is(seqErr, backup.ErrLastSeq) {
 				// --force-seq would submit seq 1 in the same epoch, which
 				// sorts below every backup already there.
 				return fail(exitRefused, "%v", seqErr)
 			}
-			if seqErr != nil && !*forceSeq {
+			if seqErr != nil && !f.forceSeq {
 				return fail(exitNetwork, "could not read existing backups (%v). Fix the server or pass --force-seq to submit as seq 1 anyway", seqErr)
 			}
-			x := submitExtras{FeeWait: *feeWait, ReadBack: !*noReadBack, Save: *save, SettingsPath: settingsPath, SettingsExist: settingsExist,
-				Settings: settings{RPC: *rpcURL, MaxFee: *maxFee, Comments: *comments, Peers: *peers}}
-			return doSubmit(o, client, source, writer, *out, *maxFee, *deleteAnchor, *yes, *batch, *attestPubKey, *attestPubSig, warns, att, *delegSig, *rpcURL, keyPath, x)
+			x := submitExtras{FeeWait: f.feeWait, ReadBack: !f.noReadBack, Save: f.save, SettingsPath: settingsPath, SettingsExist: settingsExist,
+				Settings: settings{RPC: f.rpcURL, MaxFee: f.maxFee, Comments: f.comments, Peers: f.peers}}
+			return doSubmit(o, client, source, writer, f.out, f.maxFee, f.deleteAnchor, f.yes, f.batch, f.attestPubKey, f.attestPubSig, warns, att, f.delegSig, f.rpcURL, keyPath, x)
 		}
 	}
 	if att != nil {
 		hr("Delegated attestation")
 		fmt.Fprintf(stdout, "  key:        dseq %d for validator %s\n", att.DSeq, att.VPK)
-		if *delegSig == "" {
+		if f.delegSig == "" {
 			fmt.Fprintln(stdout, "  The delegation must already be on the ledger, or pass --attest-delegation-sig to publish it with this backup.")
 		}
 	}
-	return doDryRun(o, warns, *out)
+	return doDryRun(o, warns, f.out)
 }
 
 func planReport(p *backup.Plan, o backup.Options) {
