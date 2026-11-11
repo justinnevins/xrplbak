@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.1.7 (2026-11-11)
 
 - Build: Go 1.27.4. govulncheck reports GO-2026-6859 in net/http for Go 1.27.3, fixed in 1.27.4, and finds calls into it from the rpc client. CI failed on it for the first time on 2026-11-11.
 - Fix: seven small items from the code audit.
