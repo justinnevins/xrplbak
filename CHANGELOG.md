@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Build: Go 1.27.4. govulncheck reports GO-2026-6859 in net/http for Go 1.27.3, fixed in 1.27.4, and finds calls into it from the rpc client. CI failed on it for the first time on 2026-11-11.
 - Fix: seven small items from the code audit.
   - A wrapped key file with an unknown wrap version is refused by name. The version byte was never read.
   - `tx` refuses an answer about another transaction. `account_info` refuses an answer without a Sequence. `account_tx` refuses an answer with an entry it cannot read, or a memo field that is not hex; such entries were skipped or shortened, so a damaged answer read as "nothing found".
