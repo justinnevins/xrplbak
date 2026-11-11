@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/justinnevins/xrplbak/internal/anchor"
-	"github.com/justinnevins/xrplbak/internal/crypto"
 	"github.com/justinnevins/xrplbak/internal/dump"
 	"github.com/justinnevins/xrplbak/internal/manifest"
 	"github.com/justinnevins/xrplbak/internal/xrpl"
@@ -51,35 +50,43 @@ type batchItem struct {
 
 // submitBatched is Submit's batched path. recorded and manifestParts come
 // from the dump, so a resumed run does not resend what already landed.
-func (s *Submitter) submitBatched(p *Plan, recorded map[string]dump.Tx, manifestParts map[[crypto.ManifestNonceLen]byte]map[uint16]landed) error {
-	m := p.Manifest
-
+func (s *Submitter) submitBatched(p *Plan, recorded map[string]dump.Tx, manifestParts manifestPartsByNonce) error {
 	// Chunks already on the ledger keep their recorded hash and ledger.
 	var pending []int
 	for i := range p.ChunkMemos {
-		if t, ok := recorded[m.OnChain.Chunks[i].SHA256]; ok {
-			m.OnChain.Chunks[i].TxHash, m.OnChain.Chunks[i].Ledger = t.Hash, t.LedgerIndex
-			s.Log("chunk %d of %d already on ledger (tx %s)", i+1, len(p.ChunkMemos), t.Hash)
-			continue
+		if !s.reuseChunk(p, recorded, i) {
+			pending = append(pending, i)
 		}
-		pending = append(pending, i)
 	}
 
 	// A complete manifest already on the ledger is reused as is; only the
 	// anchor is left, and a batch cannot carry one transaction.
-	for _, parts := range manifestParts {
-		if first, ok := completeManifest(parts); ok {
-			if len(pending) > 0 {
-				return errors.New("the dump records a complete manifest but not every chunk it names; refusing to guess. Start a new backup")
-			}
-			s.Log("manifest already on ledger (tx %s)", first.tx.Hash)
-			return s.sendAnchor(p, first.tx.Hash, first.tx.LedgerIndex)
+	if first, ok := landedManifest(manifestParts); ok {
+		if len(pending) > 0 {
+			return errors.New("the dump records a complete manifest but not every chunk it names; refusing to guess. Start a new backup")
 		}
+		s.Log("manifest already on ledger (tx %s)", first.tx.Hash)
+		return s.sendAnchor(p, first.tx.Hash, first.tx.LedgerIndex)
 	}
 
-	// Draft count of manifest parts. Chunk hashes are fixed-length hex and
-	// a batched chunk records ledger 0, so a draft sealed with placeholder
-	// hashes has the real part count for the single-batch case.
+	k, err := s.draftParts(p, pending)
+	if err != nil {
+		return err
+	}
+	if len(pending)+k+1 <= codec.MaxBatchInner {
+		return s.submitOneBatch(p, pending, k)
+	}
+	if err := s.sendPendingChunks(p, pending); err != nil {
+		return err
+	}
+	return s.sendManifestAndAnchor(p)
+}
+
+// draftParts counts the manifest parts. Chunk hashes are fixed-length hex
+// and a batched chunk records ledger 0, so a draft sealed with placeholder
+// hashes has the real part count for the single-batch case.
+func (s *Submitter) draftParts(p *Plan, pending []int) (int, error) {
+	m := p.Manifest
 	draft := *m
 	draft.OnChain.Chunks = append([]manifest.Chunk(nil), m.OnChain.Chunks...)
 	for _, i := range pending {
@@ -87,56 +94,59 @@ func (s *Submitter) submitBatched(p *Plan, recorded map[string]dump.Tx, manifest
 	}
 	draftMemos, _, err := ManifestMemos(s.Key.Key, p.BackupID, &draft)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	k := len(draftMemos)
+	return len(draftMemos), nil
+}
 
-	if len(pending)+k+1 <= codec.MaxBatchInner {
-		// Everything in one transaction.
-		s.Log("submitting %d chunk(s), %d manifest part(s) and the DID anchor as one batch", len(pending), k)
-		recs, ledger, err := s.sendBatch(func(seq uint32) ([]batchItem, error) {
-			var items []batchItem
-			for _, i := range pending {
-				items = append(items, batchItem{kind: "chunk", index: i, tx: &codec.Tx{Type: codec.TxAccountSet, Memos: []codec.Memo{p.ChunkMemos[i]}}})
-			}
-			s.assignInner(items, seq)
-			for _, it := range items {
-				h, err := codec.InnerHash(it.tx)
-				if err != nil {
-					return nil, err
-				}
-				m.OnChain.Chunks[it.index].TxHash, m.OnChain.Chunks[it.index].Ledger = h, 0
-			}
-			tail, err := s.tailItems(p, m, seq+uint32(len(items)))
+// chunkItems builds the inner transactions for the pending chunks.
+func chunkItems(p *Plan, pending []int) []batchItem {
+	var items []batchItem
+	for _, i := range pending {
+		items = append(items, batchItem{kind: "chunk", index: i, tx: &codec.Tx{Type: codec.TxAccountSet, Memos: []codec.Memo{p.ChunkMemos[i]}}})
+	}
+	return items
+}
+
+// submitOneBatch sends the pending chunks, every manifest part and the
+// anchor as one transaction.
+func (s *Submitter) submitOneBatch(p *Plan, pending []int, k int) error {
+	m := p.Manifest
+	s.Log("submitting %d chunk(s), %d manifest part(s) and the DID anchor as one batch", len(pending), k)
+	recs, ledger, err := s.sendBatch(func(seq uint32) ([]batchItem, error) {
+		items := chunkItems(p, pending)
+		s.assignInner(items, seq)
+		for _, it := range items {
+			h, err := codec.InnerHash(it.tx)
 			if err != nil {
 				return nil, err
 			}
-			return append(items, tail...), nil
-		})
-		if err != nil {
-			return err
+			m.OnChain.Chunks[it.index].TxHash, m.OnChain.Chunks[it.index].Ledger = h, 0
 		}
-		return s.finishBatched(p, recs, ledger)
+		tail, err := s.tailItems(p, m, seq+uint32(len(items)))
+		if err != nil {
+			return nil, err
+		}
+		return append(items, tail...), nil
+	})
+	if err != nil {
+		return err
 	}
+	return s.finishBatched(p, recs, ledger)
+}
 
-	// Chunks first. c is at most 8, so they are one batch, or one plain
-	// transaction when a single chunk is left.
+// sendPendingChunks sends the pending chunks ahead of the manifest. c is at
+// most 8, so they are one batch, or one plain transaction when a single
+// chunk is left.
+func (s *Submitter) sendPendingChunks(p *Plan, pending []int) error {
 	switch {
 	case len(pending) == 1:
-		i := pending[0]
-		s.Log("submitting chunk %d of %d", i+1, len(p.ChunkMemos))
-		hash, ledger, err := s.send(&codec.Tx{Type: codec.TxAccountSet, Memos: []codec.Memo{p.ChunkMemos[i]}})
-		if err != nil {
-			return fmt.Errorf("chunk %d: %w", i, err)
-		}
-		m.OnChain.Chunks[i].TxHash, m.OnChain.Chunks[i].Ledger = hash, ledger
+		return s.sendChunk(p, pending[0])
 	case len(pending) > 1:
+		m := p.Manifest
 		s.Log("submitting %d chunk(s) as one batch", len(pending))
 		recs, ledger, err := s.sendBatch(func(seq uint32) ([]batchItem, error) {
-			var items []batchItem
-			for _, i := range pending {
-				items = append(items, batchItem{kind: "chunk", index: i, tx: &codec.Tx{Type: codec.TxAccountSet, Memos: []codec.Memo{p.ChunkMemos[i]}}})
-			}
+			items := chunkItems(p, pending)
 			s.assignInner(items, seq)
 			return items, nil
 		})
@@ -147,9 +157,14 @@ func (s *Submitter) submitBatched(p *Plan, recorded map[string]dump.Tx, manifest
 			m.OnChain.Chunks[i].TxHash, m.OnChain.Chunks[i].Ledger = recs[j].Hash, ledger
 		}
 	}
+	return nil
+}
 
-	// Then the manifest and the anchor. The anchor shares the last batch
-	// with the last manifest part(s); earlier parts go in earlier batches.
+// sendManifestAndAnchor sends the manifest and the anchor. The anchor
+// shares the last batch with the last manifest part(s); earlier parts go in
+// earlier batches.
+func (s *Submitter) sendManifestAndAnchor(p *Plan) error {
+	m := p.Manifest
 	memos, _, err := ManifestMemos(s.Key.Key, p.BackupID, m)
 	if err != nil {
 		return err
@@ -166,44 +181,13 @@ func (s *Submitter) submitBatched(p *Plan, recorded map[string]dump.Tx, manifest
 		var ledger uint32
 		if count == 1 {
 			// Only possible for a lone leading part; never the anchor.
-			s.Log("submitting manifest part %d of %d", first+1, len(memos))
-			hash, lgr, err := s.send(&codec.Tx{Type: codec.TxAccountSet, Memos: []codec.Memo{memos[first]}})
+			hash, lgr, err := s.sendManifestPart(memos, first)
 			if err != nil {
-				return fmt.Errorf("manifest part %d: %w", first, err)
+				return err
 			}
 			recs, ledger = []xrpl.TxRecord{{Hash: hash, LedgerIndex: lgr}}, lgr
 		} else {
-			if last {
-				s.Log("submitting manifest part(s) %d to %d of %d and the DID anchor as one batch", first+1, len(memos), len(memos))
-			} else {
-				s.Log("submitting manifest part(s) %d to %d of %d as one batch", first+1, first+count, len(memos))
-			}
-			recs, ledger, err = s.sendBatch(func(seq uint32) ([]batchItem, error) {
-				var items []batchItem
-				for i := first; i < first+count && i < len(memos); i++ {
-					items = append(items, batchItem{kind: "manifest", index: i, tx: &codec.Tx{Type: codec.TxAccountSet, Memos: []codec.Memo{memos[i]}}})
-				}
-				s.assignInner(items, seq)
-				if !last {
-					return items, nil
-				}
-				// The anchor names manifest part 0: landed earlier, or in
-				// this very batch.
-				h, lgr := manifestHash, manifestLedger
-				if first == 0 {
-					h, err = codec.InnerHash(items[0].tx)
-					if err != nil {
-						return nil, err
-					}
-					lgr = 0
-				}
-				a, err := s.anchorItem(p, m, h, lgr)
-				if err != nil {
-					return nil, err
-				}
-				a.tx.Sequence = seq + 1 + uint32(len(items))
-				return append(items, a), nil
-			})
+			recs, ledger, err = s.sendManifestGroup(p, memos, first, count, last, manifestHash, manifestLedger)
 			if err != nil {
 				return fmt.Errorf("manifest: %w", err)
 			}
@@ -216,6 +200,43 @@ func (s *Submitter) submitBatched(p *Plan, recorded map[string]dump.Tx, manifest
 		}
 	}
 	return errors.New("batched submit ended without an anchor") // unreachable
+}
+
+// sendManifestGroup sends manifest parts first to first+count-1 as one
+// batch, with the anchor when last is set. The anchor names manifest part
+// 0: landed earlier at manifestHash, or in this very batch.
+func (s *Submitter) sendManifestGroup(p *Plan, memos []codec.Memo, first, count int, last bool, manifestHash string, manifestLedger uint32) ([]xrpl.TxRecord, uint32, error) {
+	m := p.Manifest
+	if last {
+		s.Log("submitting manifest part(s) %d to %d of %d and the DID anchor as one batch", first+1, len(memos), len(memos))
+	} else {
+		s.Log("submitting manifest part(s) %d to %d of %d as one batch", first+1, first+count, len(memos))
+	}
+	return s.sendBatch(func(seq uint32) ([]batchItem, error) {
+		var items []batchItem
+		for i := first; i < first+count && i < len(memos); i++ {
+			items = append(items, batchItem{kind: "manifest", index: i, tx: &codec.Tx{Type: codec.TxAccountSet, Memos: []codec.Memo{memos[i]}}})
+		}
+		s.assignInner(items, seq)
+		if !last {
+			return items, nil
+		}
+		h, lgr := manifestHash, manifestLedger
+		if first == 0 {
+			var err error
+			h, err = codec.InnerHash(items[0].tx)
+			if err != nil {
+				return nil, err
+			}
+			lgr = 0
+		}
+		a, err := s.anchorItem(p, m, h, lgr)
+		if err != nil {
+			return nil, err
+		}
+		a.tx.Sequence = seq + 1 + uint32(len(items))
+		return append(items, a), nil
+	})
 }
 
 // tailItems builds the manifest parts and the anchor for the single-batch
