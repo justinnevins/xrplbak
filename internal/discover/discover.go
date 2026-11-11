@@ -119,40 +119,79 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 	floor := epochHint
 
 	// 1. Anchor.
-	if data, err := c.LedgerEntryDID(account); err == nil {
-		if rec, perr := anchor.Parse(data); perr == nil {
-			res.Anchor = rec
-			if k, ok := keys.Epoch(rec.Epoch); ok && anchor.Verify(k, data) {
-				res.AnchorOK = true
-				if rec.Epoch > epochHint {
-					epochHint = rec.Epoch
-				}
-			} else {
-				res.Warnings = append(res.Warnings, "DID anchor present but its MAC does not verify with the available key; ignoring it")
-			}
-		} else {
-			res.Warnings = append(res.Warnings, "DID entry exists but is not an xrplbak anchor; ignoring it")
-		}
-	} else if !errors.Is(err, xrpl.ErrNotFound) {
-		return nil, fmt.Errorf("read DID anchor: %w", err)
+	epochHint, err := readAnchor(c, keys, res, epochHint)
+	if err != nil {
+		return nil, err
 	}
 
-	// 2. History scan. Parts are grouped by (backup_id, nonce prefix) and
-	// every ciphertext seen for an index is kept, so a later junk memo
-	// cannot shadow a real part.
+	// 2. History scan.
 	txs, rng, err := c.AccountTx(account)
 	if err != nil {
 		return nil, fmt.Errorf("account_tx for %s: %w", account, err)
 	}
 	res.Range = rng
-	type setKey struct {
-		id    [16]byte
-		nonce [crypto.ManifestNonceLen]byte
-		total uint16
+	sc := scanManifests(txs, account)
+	pending := openSets(res, keys, sc, epochHint, floor)
+	pending = searchUpward(res, keys, sc, pending, epochHint)
+	rejectedLedgers := countRejected(res, sc, pending)
+
+	// 3. Select.
+	sortAndDedup(res)
+	checkAnchorAgreement(res)
+	selectLatest(res)
+	anchorFindings(res)
+	rejectedWarnings(res, rejectedLedgers)
+	return res, nil
+}
+
+// readAnchor reads the DID anchor into res and returns the epoch to start
+// probing at: the anchor's epoch when it authenticates and is higher.
+func readAnchor(c xrpl.Client, keys Keys, res *Result, epochHint uint32) (uint32, error) {
+	data, err := c.LedgerEntryDID(res.Account)
+	if err != nil {
+		if !errors.Is(err, xrpl.ErrNotFound) {
+			return epochHint, fmt.Errorf("read DID anchor: %w", err)
+		}
+		return epochHint, nil
 	}
-	sets := map[setKey]*partSet{}
-	var order []setKey
-	oversized := map[setKey]uint16{}
+	rec, perr := anchor.Parse(data)
+	if perr != nil {
+		res.Warnings = append(res.Warnings, "DID entry exists but is not an xrplbak anchor; ignoring it")
+		return epochHint, nil
+	}
+	res.Anchor = rec
+	if k, ok := keys.Epoch(rec.Epoch); ok && anchor.Verify(k, data) {
+		res.AnchorOK = true
+		if rec.Epoch > epochHint {
+			epochHint = rec.Epoch
+		}
+	} else {
+		res.Warnings = append(res.Warnings, "DID anchor present but its MAC does not verify with the available key; ignoring it")
+	}
+	return epochHint, nil
+}
+
+// setKey names one manifest part set. The part count is in the key: a junk
+// memo that copies an id and nonce with another count makes its own set,
+// and cannot hide the real one by being listed first.
+type setKey struct {
+	id    [16]byte
+	nonce [crypto.ManifestNonceLen]byte
+	total uint16
+}
+
+// manifestScan is the manifest memos found in the account history.
+type manifestScan struct {
+	sets      map[setKey]*partSet
+	order     []setKey
+	oversized map[setKey]uint16
+}
+
+// scanManifests groups manifest parts by (backup_id, nonce prefix, part
+// count). Every ciphertext seen for an index is kept, so a later junk memo
+// cannot shadow a real part.
+func scanManifests(txs []xrpl.TxRecord, account string) *manifestScan {
+	sc := &manifestScan{sets: map[setKey]*partSet{}, oversized: map[setKey]uint16{}}
 	for _, t := range txs {
 		if t.Account != account || t.Result != "tesSUCCESS" {
 			continue
@@ -165,25 +204,28 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 			if p.Total > chunk.MaxManifestParts {
 				// Never opened: say so, rather than let an older backup
 				// pass as the newest.
-				oversized[setKey{p.BackupID, p.Nonce, p.Total}] = p.Total
+				sc.oversized[setKey{p.BackupID, p.Nonce, p.Total}] = p.Total
 				continue
 			}
-			// The part count is in the key: a junk memo that copies an id
-			// and nonce with another count makes its own set, and cannot
-			// hide the real one by being listed first.
 			k := setKey{p.BackupID, p.Nonce, p.Total}
-			ps := sets[k]
+			ps := sc.sets[k]
 			if ps == nil {
 				ps = &partSet{total: p.Total, parts: map[uint16][]memoPart{}}
-				sets[k] = ps
-				order = append(order, k)
+				sc.sets[k] = ps
+				sc.order = append(sc.order, k)
 			}
 			ps.parts[p.Index] = append(ps.parts[p.Index], memoPart{ct: p.Ciphertext, tx: t.Hash, ledger: t.LedgerIndex})
 		}
 	}
+	return sc
+}
+
+// openSets tries every complete set in the first probe window and returns
+// the sets that did not open.
+func openSets(res *Result, keys Keys, sc *manifestScan, epochHint, floor uint32) []setKey {
 	var pending []setKey
-	for _, k := range order {
-		ps := sets[k]
+	for _, k := range sc.order {
+		ps := sc.sets[k]
 		if int(ps.total) != len(ps.parts) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("manifest %s: only %d of %d parts in searched range", hex.EncodeToString(k.id[:8]), len(ps.parts), ps.total))
 			continue
@@ -195,9 +237,14 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 		}
 		res.Candidates = append(res.Candidates, cand)
 	}
-	// A manifest from a later epoch than the search reached stays closed
-	// above. Each epoch found moves the search up, so keep going until a
-	// pass finds nothing new.
+	return pending
+}
+
+// searchUpward retries the pending sets above the first window. A manifest
+// from a later epoch than the search reached stays closed in openSets. Each
+// epoch found moves the search up, so keep going until a pass finds nothing
+// new. It returns the sets that still did not open.
+func searchUpward(res *Result, keys Keys, sc *manifestScan, pending []setKey, epochHint uint32) []setKey {
 	upper := int64(epochHint) + maxEpochProbe
 	for len(pending) > 0 {
 		top := int64(epochHint)
@@ -220,7 +267,7 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 		upper = next
 		var still []setKey
 		for _, k := range pending {
-			if cand, ok := openManifest(keys, k.id, k.nonce[:], sets[k], more); ok {
+			if cand, ok := openManifest(keys, k.id, k.nonce[:], sc.sets[k], more); ok {
 				res.Candidates = append(res.Candidates, cand)
 			} else {
 				still = append(still, k)
@@ -228,18 +275,32 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 		}
 		pending = still
 	}
+	return pending
+}
+
+// countRejected counts the oversized and unopened manifests and returns the
+// ledger each unopened one landed in.
+func countRejected(res *Result, sc *manifestScan, pending []setKey) []uint32 {
 	var rejectedLedgers []uint32
-	for k, total := range oversized {
+	for k, total := range sc.oversized {
 		res.Rejected++
 		res.Warnings = append(res.Warnings, fmt.Sprintf("manifest %s has %d parts, above the limit of %d, and was not opened; it may be a newer backup made by a tool without this limit, or junk from someone holding the writer key", hex.EncodeToString(k.id[:8]), total, chunk.MaxManifestParts))
 	}
 	for _, k := range pending {
 		res.Rejected++
-		rejectedLedgers = append(rejectedLedgers, sets[k].lastLedger())
+		rejectedLedgers = append(rejectedLedgers, sc.sets[k].lastLedger())
 		if res.AnchorOK && res.Anchor.BackupID == k.id {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("a manifest for the anchored backup %s failed authentication; someone with the writer key may be posting junk", hex.EncodeToString(k.id[:8])))
 		}
 	}
+	return rejectedLedgers
+}
+
+// sortAndDedup orders the candidates newest first. The same backup sealed
+// twice (a resumed run) is one backup: keep the first landing. Two
+// different backups at one (epoch, seq) are a conflict the tool refuses to
+// resolve on its own.
+func sortAndDedup(res *Result) {
 	sort.SliceStable(res.Candidates, func(i, j int) bool {
 		a, b := res.Candidates[i], res.Candidates[j]
 		if a.Manifest.Epoch != b.Manifest.Epoch || a.Manifest.Seq != b.Manifest.Seq {
@@ -247,9 +308,6 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 		}
 		return a.Ledger > b.Ledger
 	})
-	// The same backup sealed twice (a resumed run) is one backup: keep the
-	// first landing. Two different backups at one (epoch, seq) are a
-	// conflict the tool refuses to resolve on its own.
 	var uniq []*Candidate
 	seen := map[[16]byte]bool{}
 	for i := len(res.Candidates) - 1; i >= 0; i-- {
@@ -260,74 +318,95 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 		}
 	}
 	res.Candidates = uniq
-	// The anchor names a backup; its (epoch, seq) must agree with the
-	// manifest it names or the anchor is not trusted for anything.
-	if res.AnchorOK {
-		for _, c := range res.Candidates {
-			if c.BackupID != res.Anchor.BackupID {
-				continue
-			}
-			if c.Manifest.Epoch != res.Anchor.Epoch || c.Manifest.Seq != res.Anchor.Seq {
-				res.AnchorOK = false
-				res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor claims epoch %d seq %d but the manifest it names is epoch %d seq %d; ignoring the anchor", res.Anchor.Epoch, res.Anchor.Seq, c.Manifest.Epoch, c.Manifest.Seq))
-				break
-			}
-			c.FromAnchor = true
+}
+
+// checkAnchorAgreement marks the candidate the anchor names. The anchor
+// names a backup; its (epoch, seq) must agree with the manifest it names or
+// the anchor is not trusted for anything.
+func checkAnchorAgreement(res *Result) {
+	if !res.AnchorOK {
+		return
+	}
+	for _, c := range res.Candidates {
+		if c.BackupID != res.Anchor.BackupID {
+			continue
+		}
+		if c.Manifest.Epoch != res.Anchor.Epoch || c.Manifest.Seq != res.Anchor.Seq {
+			res.AnchorOK = false
+			res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor claims epoch %d seq %d but the manifest it names is epoch %d seq %d; ignoring the anchor", res.Anchor.Epoch, res.Anchor.Seq, c.Manifest.Epoch, c.Manifest.Seq))
+			break
+		}
+		c.FromAnchor = true
+	}
+}
+
+// selectLatest sets Latest to the newest candidate, or Conflict when two
+// different backups share the newest (epoch, seq).
+func selectLatest(res *Result) {
+	if len(res.Candidates) == 0 {
+		return
+	}
+	a := res.Candidates[0]
+	if len(res.Candidates) > 1 {
+		b := res.Candidates[1]
+		if a.Manifest.Epoch == b.Manifest.Epoch && a.Manifest.Seq == b.Manifest.Seq {
+			res.Conflict = fmt.Sprintf("two different backups share epoch %d seq %d (ids %s at ledger %d and %s at ledger %d). Someone else may hold the writer key. Refusing to pick one; pass --backup-id to choose, and rotate the key", a.Manifest.Epoch, a.Manifest.Seq, a.Manifest.BackupID[:16], a.Ledger, b.Manifest.BackupID[:16], b.Ledger)
 		}
 	}
-	if len(res.Candidates) > 0 {
-		a := res.Candidates[0]
-		if len(res.Candidates) > 1 {
-			b := res.Candidates[1]
-			if a.Manifest.Epoch == b.Manifest.Epoch && a.Manifest.Seq == b.Manifest.Seq {
-				res.Conflict = fmt.Sprintf("two different backups share epoch %d seq %d (ids %s at ledger %d and %s at ledger %d). Someone else may hold the writer key. Refusing to pick one; pass --backup-id to choose, and rotate the key", a.Manifest.Epoch, a.Manifest.Seq, a.Manifest.BackupID[:16], a.Ledger, b.Manifest.BackupID[:16], b.Ledger)
-			}
-		}
-		if res.Conflict == "" {
-			res.Latest = a
-		}
+	if res.Conflict == "" {
+		res.Latest = a
 	}
-	if res.AnchorOK && res.Latest != nil && !res.Latest.FromAnchor {
+}
+
+// anchorWhere says where the anchored manifest landed.
+func anchorWhere(a *anchor.Record) string {
+	if a.ManifestLedger == 0 {
+		return "batched with the anchor"
+	}
+	return fmt.Sprintf("ledger %d", a.ManifestLedger)
+}
+
+// anchorFindings compares the selection with an authenticated anchor.
+func anchorFindings(res *Result) {
+	if !res.AnchorOK {
+		return
+	}
+	rng := res.Range
+	if res.Latest != nil && !res.Latest.FromAnchor {
 		if !newerThanAnchor(res.Latest.Manifest, res.Anchor) {
 			// The anchor names a backup that was not found, and nothing
 			// newer than it was found either. The current backup is out of
 			// reach here. That is not a rollback and not a complete result;
 			// the caller refuses unless the operator names a backup.
-			where := fmt.Sprintf("ledger %d", res.Anchor.ManifestLedger)
-			if res.Anchor.ManifestLedger == 0 {
-				where = "batched with the anchor"
-			}
-			res.AnchorMissing = fmt.Sprintf("DID anchor names backup %s (epoch %d seq %d, manifest tx %s, %s) but that manifest is not in the searched range %d to %d. The newest backup found is %s (epoch %d seq %d), which is not newer. Read from a server with full history, or the dump written at that backup; or pass --backup-id %s to use the older backup deliberately", hex.EncodeToString(res.Anchor.BackupID[:])[:16], res.Anchor.Epoch, res.Anchor.Seq, res.Anchor.TxHashHex(), where, rng.Min, rng.Max, res.Latest.Manifest.BackupID[:16], res.Latest.Manifest.Epoch, res.Latest.Manifest.Seq, res.Latest.Manifest.BackupID[:16])
+			res.AnchorMissing = fmt.Sprintf("DID anchor names backup %s (epoch %d seq %d, manifest tx %s, %s) but that manifest is not in the searched range %d to %d. The newest backup found is %s (epoch %d seq %d), which is not newer. Read from a server with full history, or the dump written at that backup; or pass --backup-id %s to use the older backup deliberately", hex.EncodeToString(res.Anchor.BackupID[:])[:16], res.Anchor.Epoch, res.Anchor.Seq, res.Anchor.TxHashHex(), anchorWhere(res.Anchor), rng.Min, rng.Max, res.Latest.Manifest.BackupID[:16], res.Latest.Manifest.Epoch, res.Latest.Manifest.Seq, res.Latest.Manifest.BackupID[:16])
 		} else {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor points at seq %d but seq %d exists and authenticates; possible rollback by a writer-key holder. Using seq %d.", res.Anchor.Seq, res.Latest.Manifest.Seq, res.Latest.Manifest.Seq))
 		}
 	}
-	if res.AnchorOK && res.Latest == nil && res.Conflict == "" && res.Rejected > 0 {
-		where := fmt.Sprintf("ledger %d", res.Anchor.ManifestLedger)
-		if res.Anchor.ManifestLedger == 0 {
-			where = "batched with the anchor"
-		}
-		res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor names manifest tx %s (%s) but no manifest that opens with this key is in the searched range %d to %d", res.Anchor.TxHashHex(), where, rng.Min, rng.Max))
+	if res.Latest != nil || res.Conflict != "" {
+		return
 	}
-	if res.AnchorOK && res.Latest == nil && res.Conflict == "" && res.Rejected == 0 {
-		where := fmt.Sprintf("ledger %d", res.Anchor.ManifestLedger)
-		if res.Anchor.ManifestLedger == 0 {
-			where = "batched with the anchor"
-		}
-		// The anchor authenticated with this key, so the key is right. What
-		// is missing is the backup it names: no manifest is in the history
-		// read, not even one that fails to open, and nothing else was found
-		// to offer instead. That is an incomplete result, not a wrong key.
-		// When a manifest is there and does not open, the answer stays an
-		// authentication failure.
-		res.AnchorMissing = fmt.Sprintf("DID anchor names backup %s (epoch %d seq %d, manifest tx %s, %s) but that manifest is not in the searched range %d to %d, and no backup at all was found there. The key is the right one: it authenticated the anchor. Read from a server with full history, or the dump written at that backup", hex.EncodeToString(res.Anchor.BackupID[:])[:16], res.Anchor.Epoch, res.Anchor.Seq, res.Anchor.TxHashHex(), where, rng.Min, rng.Max)
+	if res.Rejected > 0 {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("DID anchor names manifest tx %s (%s) but no manifest that opens with this key is in the searched range %d to %d", res.Anchor.TxHashHex(), anchorWhere(res.Anchor), rng.Min, rng.Max))
+		return
 	}
+	// The anchor authenticated with this key, so the key is right. What
+	// is missing is the backup it names: no manifest is in the history
+	// read, not even one that fails to open, and nothing else was found
+	// to offer instead. That is an incomplete result, not a wrong key.
+	// When a manifest is there and does not open, the answer stays an
+	// authentication failure.
+	res.AnchorMissing = fmt.Sprintf("DID anchor names backup %s (epoch %d seq %d, manifest tx %s, %s) but that manifest is not in the searched range %d to %d, and no backup at all was found there. The key is the right one: it authenticated the anchor. Read from a server with full history, or the dump written at that backup", hex.EncodeToString(res.Anchor.BackupID[:])[:16], res.Anchor.Epoch, res.Anchor.Seq, res.Anchor.TxHashHex(), anchorWhere(res.Anchor), rng.Min, rng.Max)
+}
+
+// rejectedWarnings reports manifests that did not open. A rejected
+// manifest that landed before the selected backup is expected after a
+// rotation: the key file cannot read old epochs. One that landed after it
+// may be the newest backup, so say so.
+func rejectedWarnings(res *Result, rejectedLedgers []uint32) {
 	if res.Rejected > 0 && res.Latest == nil {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("%d manifest(s) present but none authenticate: wrong recovery key, wrong epoch, or junk from a writer-key thief", res.Rejected))
 	}
-	// A rejected manifest that landed before the selected backup is
-	// expected after a rotation: the key file cannot read old epochs. One
-	// that landed after it may be the newest backup, so say so.
 	if res.Latest != nil {
 		for _, l := range rejectedLedgers {
 			if l == 0 || res.Latest.Ledger == 0 || l > res.Latest.Ledger {
@@ -338,7 +417,6 @@ func Run(c xrpl.Client, keys Keys, account string, epochHint uint32) (*Result, e
 	if res.RejectedAfter > 0 {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("%d manifest(s) landed after the selected backup (epoch %d seq %d) but do not open with this key. One may be a newer backup from another epoch, or junk from someone holding the writer key. The selected backup may not be the newest. Check with the recovery words, or with the newest key file", res.RejectedAfter, res.Latest.Manifest.Epoch, res.Latest.Manifest.Seq))
 	}
-	return res, nil
 }
 
 type memoPart struct {
