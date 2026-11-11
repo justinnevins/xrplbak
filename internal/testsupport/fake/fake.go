@@ -39,6 +39,34 @@ type Ledger struct {
 	FailInner int
 	// Batches counts the Batch transactions applied.
 	Batches int
+
+	// The fields below drive the submit retry paths. Each is used up as it
+	// fires, and all are off by default.
+
+	// Reject holds engine codes for the next submits, one per submit, in
+	// order. A rejected submit applies nothing.
+	Reject []string
+	// Queue makes the next accepted submit answer terQUEUED. The
+	// transaction still applies.
+	Queue bool
+	// Delay makes the next accepted transaction validate only on this
+	// lookup of its hash: earlier lookups find it unvalidated. Each lookup
+	// while it waits closes a ledger, unless Stall is set, so the validated
+	// ledger index moves on while the caller waits.
+	Delay int
+	// Stall stops lookups of a delayed transaction from closing ledgers.
+	Stall bool
+	// Expire drops the next accepted transactions, this many of them: the
+	// submit answers tesSUCCESS, nothing applies, and the validated ledger
+	// moves past the transaction's LastLedgerSequence.
+	Expire int
+	// InnerResult makes every inner transaction of the next Batch validate
+	// with this result instead of tesSUCCESS.
+	InnerResult string
+	// LastSubmitted is the last transaction a submit decoded.
+	LastSubmitted *codec.Tx
+
+	pending map[string]int // hash -> lookups left before it validates
 }
 
 // New starts at ledger 1000 with a 10 drop fee.
@@ -58,10 +86,16 @@ func (l *Ledger) Submit(blob []byte) (string, error) {
 		l.FailSubmit = ""
 		return code, nil
 	}
+	if len(l.Reject) > 0 {
+		code := l.Reject[0]
+		l.Reject = l.Reject[1:]
+		return code, nil
+	}
 	tx, err := txdecode.Deserialize(blob)
 	if err != nil {
 		return "", err
 	}
+	l.LastSubmitted = tx
 	addr := sign.EncodeAddress(tx.Account)
 	acct, ok := l.Accounts[addr]
 	if !ok {
@@ -70,18 +104,43 @@ func (l *Ledger) Submit(blob []byte) (string, error) {
 	if tx.Sequence != acct.Sequence {
 		return "tefPAST_SEQ", nil
 	}
+	if tx.LastLedgerSequence != 0 && tx.LastLedgerSequence <= l.Seq {
+		return "tefMAX_LEDGER", nil
+	}
 	payload, _ := codec.SigningPayload(tx)
 	if !sign.VerifyEd25519(tx.SigningPubKey, payload, tx.TxnSignature) {
 		return "temBAD_SIGNATURE", nil
 	}
-	if tx.Type == codec.TxBatch {
-		return l.submitBatch(tx, addr, acct, codec.Hash(blob))
+	if l.Expire > 0 {
+		l.Expire--
+		l.Seq = tx.LastLedgerSequence + 1
+		return "tesSUCCESS", nil
 	}
-	acct.Sequence++
-	acct.BalanceDrops -= tx.FeeDrops
-	l.Seq++
-	l.apply(tx, addr, codec.Hash(blob))
-	return "tesSUCCESS", nil
+	hash := codec.Hash(blob)
+	var code string
+	if tx.Type == codec.TxBatch {
+		if code, err = l.submitBatch(tx, addr, acct, hash); err != nil || code != "tesSUCCESS" {
+			return code, err
+		}
+	} else {
+		acct.Sequence++
+		acct.BalanceDrops -= tx.FeeDrops
+		l.Seq++
+		l.apply(tx, addr, hash)
+		code = "tesSUCCESS"
+	}
+	if l.Delay > 0 {
+		if l.pending == nil {
+			l.pending = map[string]int{}
+		}
+		l.pending[strings.ToUpper(hash)] = l.Delay
+		l.Delay = 0
+	}
+	if l.Queue {
+		l.Queue = false
+		code = "terQUEUED"
+	}
+	return code, nil
 }
 
 // submitBatch models the rippled Batch rules the tool relies on
@@ -140,7 +199,11 @@ func (l *Ledger) submitBatch(tx *codec.Tx, addr string, acct *xrpl.AccountState,
 		}
 		acct.Sequence++
 		l.apply(in, addr, h)
+		if l.InnerResult != "" {
+			l.Txs[len(l.Txs)-1].Result = l.InnerResult
+		}
 	}
+	l.InnerResult = ""
 	return "tesSUCCESS", nil
 }
 
@@ -175,6 +238,18 @@ func (l *Ledger) Tx(hash string) (*xrpl.TxRecord, error) {
 	for i := range l.Txs {
 		if strings.EqualFold(l.Txs[i].Hash, hash) && l.Txs[i].LedgerIndex >= l.Prune {
 			t := l.Txs[i]
+			if left, ok := l.pending[strings.ToUpper(hash)]; ok {
+				// Still waiting: a ledger closes without it.
+				if !l.Stall {
+					l.Seq++
+				}
+				if left--; left > 0 {
+					l.pending[strings.ToUpper(hash)] = left
+					t.Validated, t.Result = false, ""
+					return &t, nil
+				}
+				delete(l.pending, strings.ToUpper(hash))
+			}
 			return &t, nil
 		}
 	}
