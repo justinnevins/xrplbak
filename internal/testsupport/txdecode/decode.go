@@ -1,14 +1,18 @@
-package codec
+// Package txdecode parses transaction blobs that codec.Serialize produced.
+// It is test support: the fake ledger and the codec tests use it, and
+// nothing in the xrplbak binary imports it.
+package txdecode
 
 import (
 	"errors"
 	"fmt"
+
+	"github.com/justinnevins/xrplbak/internal/xrpl/codec"
 )
 
-// Deserialize parses a blob produced by Serialize. It understands only the
-// fields this tool emits; anything else is an error. Used by tests and by
-// the offline fake, never on the submit path.
-func Deserialize(b []byte) (*Tx, error) {
+// Deserialize parses a blob produced by codec.Serialize. It understands
+// only the fields this tool emits; anything else is an error.
+func Deserialize(b []byte) (*codec.Tx, error) {
 	r := &reader{b: b}
 	tx, err := r.object(false)
 	if err != nil {
@@ -23,8 +27,8 @@ func Deserialize(b []byte) (*Tx, error) {
 // object parses one transaction's fields. At the top level it reads to the
 // end of the input; inside a RawTransaction it stops at the object end
 // marker (0xE1), which it consumes.
-func (r *reader) object(nested bool) (*Tx, error) {
-	tx := &Tx{}
+func (r *reader) object(nested bool) (*codec.Tx, error) {
+	tx := &codec.Tx{}
 	for !r.done() {
 		if nested && r.b[r.i] == 0xE1 {
 			r.i++
@@ -115,8 +119,8 @@ func (r *reader) object(nested bool) (*Tx, error) {
 
 // rawTransactions parses the RawTransactions array: RawTransaction objects
 // (field 34) each ending in 0xE1, then the array end 0xF1.
-func (r *reader) rawTransactions() ([]*Tx, error) {
-	var out []*Tx
+func (r *reader) rawTransactions() ([]*codec.Tx, error) {
+	var out []*codec.Tx
 	for {
 		if r.done() {
 			return nil, errors.New("RawTransactions is not terminated")
@@ -211,8 +215,8 @@ func (r *reader) vl() ([]byte, error) {
 	return r.take(n)
 }
 
-func (r *reader) memos() ([]Memo, error) {
-	var out []Memo
+func (r *reader) memos() ([]codec.Memo, error) {
+	var out []codec.Memo
 	for {
 		h, err := r.take(1)
 		if err != nil {
@@ -224,7 +228,7 @@ func (r *reader) memos() ([]Memo, error) {
 		if h[0] != 0xEA {
 			return nil, errors.New("bad memo object header")
 		}
-		var m Memo
+		var m codec.Memo
 		for {
 			f, err := r.take(1)
 			if err != nil {

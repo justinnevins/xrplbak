@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/justinnevins/xrplbak/internal/testsupport/fake"
 	"github.com/justinnevins/xrplbak/internal/xrpl"
-	"github.com/justinnevins/xrplbak/internal/xrpl/fake"
 )
 
 // unknownAmendments is a server whose feature RPC cannot be read.

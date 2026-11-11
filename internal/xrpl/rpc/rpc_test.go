@@ -16,8 +16,8 @@ import (
 	"github.com/justinnevins/xrplbak/internal/backup"
 	"github.com/justinnevins/xrplbak/internal/crypto"
 	"github.com/justinnevins/xrplbak/internal/discover"
+	"github.com/justinnevins/xrplbak/internal/testsupport/fake"
 	"github.com/justinnevins/xrplbak/internal/xrpl"
-	"github.com/justinnevins/xrplbak/internal/xrpl/fake"
 	"github.com/justinnevins/xrplbak/internal/xrpl/sign"
 )
 

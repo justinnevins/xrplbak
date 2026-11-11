@@ -1,6 +1,7 @@
 // Package fake is an in-memory XRPL for tests. It validates every submitted
 // transaction instantly and keeps a per-account DID entry. It is not a
-// consensus engine: sequence checks are the only rule it enforces.
+// consensus engine: sequence checks are the only rule it enforces. It is
+// test support: nothing in the xrplbak binary imports it.
 package fake
 
 import (
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/justinnevins/xrplbak/internal/testsupport/txdecode"
 	"github.com/justinnevins/xrplbak/internal/xrpl"
 	"github.com/justinnevins/xrplbak/internal/xrpl/codec"
 	"github.com/justinnevins/xrplbak/internal/xrpl/sign"
@@ -56,7 +58,7 @@ func (l *Ledger) Submit(blob []byte) (string, error) {
 		l.FailSubmit = ""
 		return code, nil
 	}
-	tx, err := codec.Deserialize(blob)
+	tx, err := txdecode.Deserialize(blob)
 	if err != nil {
 		return "", err
 	}
@@ -160,7 +162,7 @@ func (l *Ledger) apply(tx *codec.Tx, addr, hash string) {
 		raw["Flags"] = tx.Flags
 	}
 	if len(tx.Memos) > 0 {
-		raw["Memos"] = xrpl.MemosToJSON(tx.Memos)
+		raw["Memos"] = MemosToJSON(tx.Memos)
 	}
 	if len(tx.Data) > 0 {
 		raw["Data"] = strings.ToUpper(hex.EncodeToString(tx.Data))
@@ -219,4 +221,17 @@ func (l *Ledger) ServerInfo() (*xrpl.ServerState, error) {
 		return nil, errors.New("fake: no fee")
 	}
 	return &xrpl.ServerState{ValidatedLedger: l.Seq, CompleteLedgers: "1000-9999", BaseFeeDrops: 10, OpenLedgerFee: l.Fee}, nil
+}
+
+// MemosToJSON renders memos the way the JSON API expects (upper hex).
+func MemosToJSON(memos []codec.Memo) []map[string]map[string]string {
+	var out []map[string]map[string]string
+	for _, m := range memos {
+		e := map[string]string{"MemoType": strings.ToUpper(hex.EncodeToString(m.Type)), "MemoData": strings.ToUpper(hex.EncodeToString(m.Data))}
+		if len(m.Format) > 0 {
+			e["MemoFormat"] = strings.ToUpper(hex.EncodeToString(m.Format))
+		}
+		out = append(out, map[string]map[string]string{"Memo": e})
+	}
+	return out
 }

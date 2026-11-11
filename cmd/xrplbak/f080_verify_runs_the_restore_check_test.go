@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/justinnevins/xrplbak/internal/container"
-	"github.com/justinnevins/xrplbak/internal/xrpl/fake"
+	"github.com/justinnevins/xrplbak/internal/testsupport/fake"
 )
 
 // F-080: verify fetched and authenticated the chunks and printed "on-chain

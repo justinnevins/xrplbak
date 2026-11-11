@@ -10,8 +10,8 @@ import (
 
 	"github.com/justinnevins/xrplbak/internal/anchor"
 	"github.com/justinnevins/xrplbak/internal/dump"
+	"github.com/justinnevins/xrplbak/internal/testsupport/fake"
 	"github.com/justinnevins/xrplbak/internal/xrpl"
-	"github.com/justinnevins/xrplbak/internal/xrpl/fake"
 )
 
 // A dump is a record of what landed somewhere. The ledger the operator is
