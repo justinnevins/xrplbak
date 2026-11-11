@@ -16,9 +16,9 @@ import (
 // Queue, Delay, Stall, Expire, InnerResult).
 
 // batchRun runs one batched backup of the fixture config. setup changes
-// the fake ledger before the run. It returns the run's error and every
-// sleep the run asked for.
-func batchRun(t *testing.T, setup func(*fake.Ledger)) (*env, error, []time.Duration) {
+// the fake ledger before the run. It returns every sleep the run asked
+// for and the run's error.
+func batchRun(t *testing.T, setup func(*fake.Ledger)) (*env, []time.Duration, error) {
 	t.Helper()
 	e := newEnv(t)
 	e.ledger.Batch = true
@@ -31,7 +31,8 @@ func batchRun(t *testing.T, setup func(*fake.Ledger)) (*env, error, []time.Durat
 	}
 	var sleeps []time.Duration
 	s := &Submitter{Client: e.ledger, Writer: e.writer, Key: e.key, Batch: true, Sleep: func(d time.Duration) { sleeps = append(sleeps, d) }}
-	return e, s.Submit(p), sleeps
+	err = s.Submit(p)
+	return e, sleeps, err
 }
 
 func count(ds []time.Duration, d time.Duration) int {
@@ -47,7 +48,7 @@ func count(ds []time.Duration, d time.Duration) int {
 // The fixture fits one batch. A plain run is the baseline the others
 // differ from: one submit, one batch, one 2 s wait.
 func TestBatchBaselineOneSubmit(t *testing.T) {
-	e, err, sleeps := batchRun(t, nil)
+	e, sleeps, err := batchRun(t, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +61,7 @@ func TestBatchBaselineOneSubmit(t *testing.T) {
 // 4 s, rebuild with fresh sequences, and submit again.
 func TestBatchRetriesASequenceRace(t *testing.T) {
 	for _, code := range []string{"tefPAST_SEQ", "terPRE_SEQ"} {
-		e, err, sleeps := batchRun(t, func(l *fake.Ledger) { l.Reject = []string{code} })
+		e, sleeps, err := batchRun(t, func(l *fake.Ledger) { l.Reject = []string{code} })
 		if err != nil {
 			t.Fatalf("%s: %v", code, err)
 		}
@@ -75,7 +76,7 @@ func TestBatchRetriesASequenceRace(t *testing.T) {
 
 // Any other engine code ends the run at once and names the code.
 func TestBatchStopsOnARejectedSubmit(t *testing.T) {
-	e, err, _ := batchRun(t, func(l *fake.Ledger) { l.Reject = []string{"temMALFORMED"} })
+	e, _, err := batchRun(t, func(l *fake.Ledger) { l.Reject = []string{"temMALFORMED"} })
 	if err == nil || !strings.Contains(err.Error(), "submit returned temMALFORMED for batch") {
 		t.Fatalf("err = %v", err)
 	}
@@ -86,7 +87,7 @@ func TestBatchStopsOnARejectedSubmit(t *testing.T) {
 
 // terQUEUED is accepted: the batch applies when its ledger closes.
 func TestBatchAcceptsAQueuedSubmit(t *testing.T) {
-	e, err, _ := batchRun(t, func(l *fake.Ledger) { l.Queue = true })
+	e, _, err := batchRun(t, func(l *fake.Ledger) { l.Queue = true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +98,7 @@ func TestBatchAcceptsAQueuedSubmit(t *testing.T) {
 
 // Three attempts, then the run gives up and says so.
 func TestBatchGivesUpAfterThreeAttempts(t *testing.T) {
-	e, err, _ := batchRun(t, func(l *fake.Ledger) {
+	e, _, err := batchRun(t, func(l *fake.Ledger) {
 		l.Reject = []string{"tefPAST_SEQ", "tefPAST_SEQ", "tefPAST_SEQ", "tefPAST_SEQ", "tefPAST_SEQ"}
 	})
 	if err == nil || !strings.Contains(err.Error(), "batch did not validate after 3 attempts") {
@@ -111,7 +112,7 @@ func TestBatchGivesUpAfterThreeAttempts(t *testing.T) {
 // A batch that is slow to validate is waited for, every 2 s, and never
 // sent twice.
 func TestBatchWaitsForValidation(t *testing.T) {
-	e, err, sleeps := batchRun(t, func(l *fake.Ledger) { l.Delay = 3 })
+	e, sleeps, err := batchRun(t, func(l *fake.Ledger) { l.Delay = 3 })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestBatchKeepsWaitingAtItsLastLedger(t *testing.T) {
 	// Each lookup closes one ledger. The batch lands one ledger after the
 	// submit, so the 19th lookup sees the validated ledger reach exactly
 	// its LastLedgerSequence; it validates on the 20th.
-	e, err, _ := batchRun(t, func(l *fake.Ledger) { l.Delay = 20 })
+	e, _, err := batchRun(t, func(l *fake.Ledger) { l.Delay = 20 })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +142,7 @@ func TestBatchKeepsWaitingAtItsLastLedger(t *testing.T) {
 
 // With no ledger closing, the run polls 45 times, 90 s, then tries again.
 func TestBatchPollsFortyFiveTimesBeforeTryingAgain(t *testing.T) {
-	e, err, sleeps := batchRun(t, func(l *fake.Ledger) { l.Delay = 46; l.Stall = true })
+	e, sleeps, err := batchRun(t, func(l *fake.Ledger) { l.Delay = 46; l.Stall = true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +159,7 @@ func TestBatchPollsFortyFiveTimesBeforeTryingAgain(t *testing.T) {
 // An expired batch is rebuilt at once, with fresh sequences and a fresh
 // LastLedgerSequence, not after 90 s of polling.
 func TestBatchRebuildsAnExpiredBatchAtOnce(t *testing.T) {
-	e, err, sleeps := batchRun(t, func(l *fake.Ledger) { l.Expire = 1 })
+	e, sleeps, err := batchRun(t, func(l *fake.Ledger) { l.Expire = 1 })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +174,7 @@ func TestBatchRebuildsAnExpiredBatchAtOnce(t *testing.T) {
 // Under all-or-nothing an inner transaction that validates with any result
 // but tesSUCCESS means nothing from the batch applied.
 func TestBatchChecksEveryInnerResult(t *testing.T) {
-	_, err, _ := batchRun(t, func(l *fake.Ledger) { l.InnerResult = "tecFAILED_PROCESSING" })
+	_, _, err := batchRun(t, func(l *fake.Ledger) { l.InnerResult = "tecFAILED_PROCESSING" })
 	if err == nil || !strings.Contains(err.Error(), "but inner transaction 1 of ") {
 		t.Fatalf("err = %v", err)
 	}
@@ -182,7 +183,7 @@ func TestBatchChecksEveryInnerResult(t *testing.T) {
 // The outer transaction pays (inner + 2) times the rate and expires 20
 // ledgers after the validated ledger it was built against.
 func TestBatchFeeAndLastLedger(t *testing.T) {
-	e, err, _ := batchRun(t, nil)
+	e, _, err := batchRun(t, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +202,7 @@ func TestBatchFeeAndLastLedger(t *testing.T) {
 // The account must hold the 1.2 XRP reserve plus the batch fee. Exactly
 // that much is enough; one drop less is refused before anything is sent.
 func TestBatchReserveBoundary(t *testing.T) {
-	twin, err, _ := batchRun(t, nil)
+	twin, _, err := batchRun(t, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +211,7 @@ func TestBatchReserveBoundary(t *testing.T) {
 		drops uint64
 		ok    bool
 	}{{1_200_000 + fee, true}, {1_200_000 + fee - 1, false}} {
-		e, err, _ := batchRun(t, func(l *fake.Ledger) {
+		e, _, err := batchRun(t, func(l *fake.Ledger) {
 			for _, a := range l.Accounts {
 				a.BalanceDrops = tc.drops
 			}
