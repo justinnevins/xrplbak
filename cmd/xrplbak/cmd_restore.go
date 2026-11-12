@@ -366,7 +366,7 @@ func buildRestorePlan(s *source, res *discover.Result, cand *discover.Candidate,
 	}
 	var bundle []container.Entry
 	if bundlePath != "" {
-		b, err := os.ReadFile(bundlePath)
+		b, err := os.ReadFile(bundlePath) // #nosec G304 -- the operator names the bundle file with --bundle
 		if err != nil {
 			return nil, err
 		}
