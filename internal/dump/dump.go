@@ -94,25 +94,6 @@ func (d *Dump) Save(path string) error {
 	return os.Rename(tmp, path)
 }
 
-// Merge adds transactions from another dump for the same account.
-func (d *Dump) Merge(o *Dump) {
-	// Keyed the way Tx resolves a hash, so a merge cannot introduce a
-	// duplicate that Load would refuse on the next read.
-	seen := map[string]bool{}
-	for _, t := range d.Txs {
-		seen[strings.ToUpper(t.Hash)] = true
-	}
-	for _, t := range o.Txs {
-		if k := strings.ToUpper(t.Hash); !seen[k] {
-			d.Txs = append(d.Txs, t)
-			seen[k] = true
-		}
-	}
-	if o.DID != nil && (d.DID == nil || o.DID.LedgerIndex >= d.DID.LedgerIndex) {
-		d.DID = o.DID
-	}
-}
-
 // Client serves the dump through the xrpl.Client interface. Writes fail.
 type Client struct{ D *Dump }
 
