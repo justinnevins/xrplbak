@@ -84,147 +84,24 @@ func Build(o Options) (*Plan, error) {
 	if o.Now.IsZero() {
 		o.Now = time.Now().UTC()
 	}
-	var onEntries, bundleEntries []container.Entry
-	var files []manifest.File
-	var moves []redact.Move
-	role := "node"
-	onTxt := map[string]string{}
-
-	addSplit := func(path string) error {
-		raw, mode, path, err := readFile(path)
-		if err != nil {
-			return err
-		}
-		res, err := redact.Split(cfg.Parse(string(raw)), redact.Options{Comments: o.Comments, PeersOnChain: o.PeersOnChain})
-		if err != nil {
-			return fmt.Errorf("%s: %w", path, err)
-		}
-		if res.Role == "validator" {
-			role = "validator"
-		}
-		for _, mv := range res.Moves {
-			mv.File = path
-			moves = append(moves, mv)
-		}
-		on := res.OnChain.Render()
-		onTxt[path] = on
-		onEntries = append(onEntries, container.Entry{Path: path, Mode: mode, Data: []byte(on)})
-		where := "onchain"
-		if len(res.Bundle.Lines) > 0 {
-			bundleEntries = append(bundleEntries, container.Entry{Path: path, Mode: mode, Data: []byte(res.Bundle.Render())})
-			where = "onchain+bundle"
-		}
-		// Hash the operator's own bytes. That is what a correct restore
-		// reproduces, and what "complete" has to mean.
-		sum := sha256.Sum256(raw)
-		files = append(files, manifest.File{Path: path, Mode: mode, SHA256: hex.EncodeToString(sum[:]), Where: where})
-		return nil
-	}
 	if o.Tombstone && len(o.Includes) > 0 {
 		return nil, errors.New("a tombstone stores no files; it cannot take --include")
 	}
+	in, err := readInputs(o)
+	if err != nil {
+		return nil, err
+	}
+	pk, err := packInputs(in)
+	if err != nil {
+		return nil, err
+	}
+	id := o.Key.Key.BackupID(append(append([]byte{}, pk.onPacked...), pk.bundlePacked...), o.Key.Epoch, o.Seq)
+	m := newManifest(o, in, pk, id)
+	p := &Plan{BackupID: id, Manifest: m, Moves: in.moves, Role: in.role, OnChainTxt: in.onTxt}
 	if !o.Tombstone {
-		if err := addSplit(o.ConfigPath); err != nil {
+		if err := sealPlan(p, o.Key.Key.BackupKey(id), o.Key.Key.BundleKey(id), pk); err != nil {
 			return nil, err
 		}
-		if o.ValidatorsPath != "" {
-			if err := addSplit(o.ValidatorsPath); err != nil {
-				return nil, err
-			}
-		}
-		for _, inc := range o.Includes {
-			raw, mode, inc, err := readFile(inc)
-			if err != nil {
-				return nil, err
-			}
-			if err := refuseSecrets(inc, raw); err != nil {
-				return nil, err
-			}
-			bundleEntries = append(bundleEntries, container.Entry{Path: inc, Mode: mode, Data: raw})
-			sum := sha256.Sum256(raw)
-			files = append(files, manifest.File{Path: inc, Mode: mode, SHA256: hex.EncodeToString(sum[:]), Where: "bundle"})
-		}
-	}
-
-	// One file, one manifest entry. An --include equal to --config once put
-	// the whole file in the bundle beside its on-chain split, and restore
-	// merged the two into a file with its content doubled.
-	seen := map[string]bool{}
-	for _, f := range files {
-		if seen[f.Path] {
-			return nil, fmt.Errorf("%s is named more than once (by --config, --validators or --include); name each file once", f.Path)
-		}
-		seen[f.Path] = true
-	}
-
-	onRaw, err := container.Encode(onEntries)
-	if err != nil {
-		return nil, err
-	}
-	bundleRaw, err := container.Encode(bundleEntries)
-	if err != nil {
-		return nil, err
-	}
-	onPacked, err := container.Pack(onRaw)
-	if err != nil {
-		return nil, err
-	}
-	bundlePacked, err := container.Pack(bundleRaw)
-	if err != nil {
-		return nil, err
-	}
-	pieces, err := chunk.Split(onPacked)
-	if err != nil {
-		return nil, err
-	}
-	if len(pieces) > chunk.MaxChunks {
-		return nil, fmt.Errorf("on-chain config needs %d chunks; the limit is %d (%d bytes). Move large stanzas to the bundle with --bundle-stanza, or shorten the config", len(pieces), chunk.MaxChunks, chunk.MaxChunks*container.BlockLen)
-	}
-
-	id := o.Key.Key.BackupID(append(append([]byte{}, onPacked...), bundlePacked...), o.Key.Epoch, o.Seq)
-	kb := o.Key.Key.BackupKey(id)
-	kbundle := o.Key.Key.BundleKey(id)
-
-	m := &manifest.Manifest{Epoch: o.Key.Epoch, Seq: o.Seq, BackupID: hex.EncodeToString(id), Created: o.Now.UTC().Format(time.RFC3339), Tool: ToolVersion}
-	m.Node.Role = role
-	m.Node.VPKSHA256 = o.VPKSHA256
-	onSum := sha256.Sum256(onRaw)
-	m.OnChain.PlainSHA256 = hex.EncodeToString(onSum[:])
-	m.OnChain.PlainLen = len(onRaw)
-	bSum := sha256.Sum256(bundleRaw)
-	m.Bundle.PlainSHA256 = hex.EncodeToString(bSum[:])
-	m.Files = files
-	for _, mv := range moves {
-		idx := 0
-		for i, f := range files {
-			if f.Path == mv.File {
-				idx = i + 1
-				break
-			}
-		}
-		m.Redactions = append(m.Redactions, manifest.Redaction{FileIndex: idx, Stanza: mv.Stanza, Lines: mv.Lines, Comments: mv.Comments, To: "bundle"})
-	}
-	m.Supersedes = o.Supersedes
-	m.Tombstone = o.Tombstone
-
-	p := &Plan{BackupID: id, Manifest: m, Moves: moves, Role: role, OnChainTxt: onTxt}
-	if !o.Tombstone {
-		total := uint16(len(pieces))
-		for i, piece := range pieces {
-			ct := crypto.SealChunk(kb, id, uint16(i), total, piece)
-			memo, err := chunk.Encode(chunk.TypeChunk, id, uint16(i), total, nil, ct)
-			if err != nil {
-				return nil, err
-			}
-			sum := sha256.Sum256(ct)
-			m.OnChain.Chunks = append(m.OnChain.Chunks, manifest.Chunk{Index: i, SHA256: hex.EncodeToString(sum[:])})
-			p.Chunks = append(p.Chunks, ct)
-			p.ChunkMemos = append(p.ChunkMemos, memo)
-		}
-		p.Bundle = crypto.SealBundle(kbundle, id, bundlePacked)
-		cSum := sha256.Sum256(p.Bundle)
-		m.Bundle.CipherSHA256 = hex.EncodeToString(cSum[:])
-		m.Bundle.Len = len(p.Bundle)
 	}
 	n, err := projectedManifestParts(m)
 	if err != nil {
@@ -239,6 +116,181 @@ func Build(o Options) (*Plan, error) {
 		p.AttestPublicText = pubattest.SignString(o.AttestPublicVPK, sign.EncodeAddress(o.Key.AccountID[:]), o.Key.Epoch, o.Seq, m.BackupID)
 	}
 	return p, nil
+}
+
+// inputs is what Build read from disk: the on-chain and bundle container
+// entries, one manifest entry per file, and the lines moved to the bundle.
+type inputs struct {
+	onEntries, bundleEntries []container.Entry
+	files                    []manifest.File
+	moves                    []redact.Move
+	role                     string
+	onTxt                    map[string]string // path -> canonical on-chain text
+}
+
+// readInputs reads the config, validators file and includes. A tombstone
+// reads nothing. Each file may be named once.
+func readInputs(o Options) (*inputs, error) {
+	in := &inputs{role: "node", onTxt: map[string]string{}}
+	if !o.Tombstone {
+		if err := in.addSplit(o, o.ConfigPath); err != nil {
+			return nil, err
+		}
+		if o.ValidatorsPath != "" {
+			if err := in.addSplit(o, o.ValidatorsPath); err != nil {
+				return nil, err
+			}
+		}
+		for _, inc := range o.Includes {
+			if err := in.addInclude(inc); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// One file, one manifest entry. An --include equal to --config once put
+	// the whole file in the bundle beside its on-chain split, and restore
+	// merged the two into a file with its content doubled.
+	seen := map[string]bool{}
+	for _, f := range in.files {
+		if seen[f.Path] {
+			return nil, fmt.Errorf("%s is named more than once (by --config, --validators or --include); name each file once", f.Path)
+		}
+		seen[f.Path] = true
+	}
+	return in, nil
+}
+
+// addSplit reads one config file and splits it into what goes on-chain and
+// what goes to the bundle.
+func (in *inputs) addSplit(o Options, path string) error {
+	raw, mode, path, err := readFile(path)
+	if err != nil {
+		return err
+	}
+	res, err := redact.Split(cfg.Parse(string(raw)), redact.Options{Comments: o.Comments, PeersOnChain: o.PeersOnChain})
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if res.Role == "validator" {
+		in.role = "validator"
+	}
+	for _, mv := range res.Moves {
+		mv.File = path
+		in.moves = append(in.moves, mv)
+	}
+	on := res.OnChain.Render()
+	in.onTxt[path] = on
+	in.onEntries = append(in.onEntries, container.Entry{Path: path, Mode: mode, Data: []byte(on)})
+	where := "onchain"
+	if len(res.Bundle.Lines) > 0 {
+		in.bundleEntries = append(in.bundleEntries, container.Entry{Path: path, Mode: mode, Data: []byte(res.Bundle.Render())})
+		where = "onchain+bundle"
+	}
+	// Hash the operator's own bytes. That is what a correct restore
+	// reproduces, and what "complete" has to mean.
+	sum := sha256.Sum256(raw)
+	in.files = append(in.files, manifest.File{Path: path, Mode: mode, SHA256: hex.EncodeToString(sum[:]), Where: where})
+	return nil
+}
+
+// addInclude reads one --include file whole into the bundle, after
+// refusing key material.
+func (in *inputs) addInclude(inc string) error {
+	raw, mode, inc, err := readFile(inc)
+	if err != nil {
+		return err
+	}
+	if err := refuseSecrets(inc, raw); err != nil {
+		return err
+	}
+	in.bundleEntries = append(in.bundleEntries, container.Entry{Path: inc, Mode: mode, Data: raw})
+	sum := sha256.Sum256(raw)
+	in.files = append(in.files, manifest.File{Path: inc, Mode: mode, SHA256: hex.EncodeToString(sum[:]), Where: "bundle"})
+	return nil
+}
+
+// packed is the encoded and packed containers, and the on-chain one cut
+// into chunk pieces.
+type packed struct {
+	onRaw, bundleRaw       []byte
+	onPacked, bundlePacked []byte
+	pieces                 [][]byte
+}
+
+// packInputs encodes and packs both containers and cuts the on-chain one
+// into chunks, refusing more than chunk.MaxChunks.
+func packInputs(in *inputs) (*packed, error) {
+	var pk packed
+	var err error
+	if pk.onRaw, err = container.Encode(in.onEntries); err != nil {
+		return nil, err
+	}
+	if pk.bundleRaw, err = container.Encode(in.bundleEntries); err != nil {
+		return nil, err
+	}
+	if pk.onPacked, err = container.Pack(pk.onRaw); err != nil {
+		return nil, err
+	}
+	if pk.bundlePacked, err = container.Pack(pk.bundleRaw); err != nil {
+		return nil, err
+	}
+	if pk.pieces, err = chunk.Split(pk.onPacked); err != nil {
+		return nil, err
+	}
+	if len(pk.pieces) > chunk.MaxChunks {
+		return nil, fmt.Errorf("on-chain config needs %d chunks; the limit is %d (%d bytes). Move large stanzas to the bundle with --bundle-stanza, or shorten the config", len(pk.pieces), chunk.MaxChunks, chunk.MaxChunks*container.BlockLen)
+	}
+	return &pk, nil
+}
+
+// newManifest fills in the manifest for backup id. Chunk hashes and bundle
+// ciphertext fields come later, from sealPlan.
+func newManifest(o Options, in *inputs, pk *packed, id []byte) *manifest.Manifest {
+	m := &manifest.Manifest{Epoch: o.Key.Epoch, Seq: o.Seq, BackupID: hex.EncodeToString(id), Created: o.Now.UTC().Format(time.RFC3339), Tool: ToolVersion}
+	m.Node.Role = in.role
+	m.Node.VPKSHA256 = o.VPKSHA256
+	onSum := sha256.Sum256(pk.onRaw)
+	m.OnChain.PlainSHA256 = hex.EncodeToString(onSum[:])
+	m.OnChain.PlainLen = len(pk.onRaw)
+	bSum := sha256.Sum256(pk.bundleRaw)
+	m.Bundle.PlainSHA256 = hex.EncodeToString(bSum[:])
+	m.Files = in.files
+	for _, mv := range in.moves {
+		idx := 0
+		for i, f := range in.files {
+			if f.Path == mv.File {
+				idx = i + 1
+				break
+			}
+		}
+		m.Redactions = append(m.Redactions, manifest.Redaction{FileIndex: idx, Stanza: mv.Stanza, Lines: mv.Lines, Comments: mv.Comments, To: "bundle"})
+	}
+	m.Supersedes = o.Supersedes
+	m.Tombstone = o.Tombstone
+	return m
+}
+
+// sealPlan encrypts each chunk and the bundle into p, and records their
+// hashes in the manifest.
+func sealPlan(p *Plan, kb, kbundle [crypto.KeyLen]byte, pk *packed) error {
+	m, id := p.Manifest, p.BackupID
+	total := uint16(len(pk.pieces))
+	for i, piece := range pk.pieces {
+		ct := crypto.SealChunk(kb, id, uint16(i), total, piece)
+		memo, err := chunk.Encode(chunk.TypeChunk, id, uint16(i), total, nil, ct)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(ct)
+		m.OnChain.Chunks = append(m.OnChain.Chunks, manifest.Chunk{Index: i, SHA256: hex.EncodeToString(sum[:])})
+		p.Chunks = append(p.Chunks, ct)
+		p.ChunkMemos = append(p.ChunkMemos, memo)
+	}
+	p.Bundle = crypto.SealBundle(kbundle, id, pk.bundlePacked)
+	cSum := sha256.Sum256(p.Bundle)
+	m.Bundle.CipherSHA256 = hex.EncodeToString(cSum[:])
+	m.Bundle.Len = len(p.Bundle)
+	return nil
 }
 
 // readFile reads a regular file and returns its content, permission bits,
