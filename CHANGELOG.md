@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.1.8 (2026-11-12)
 
 - Fix: `xrplbak.settings` could turn `--comments=onchain` or `--peers=onchain` on without the typed phrase. Anyone who could write the key file's directory could write the file, without reading the key. `--save` now signs the file with a key derived from the key file. An on-chain choice is taken as already confirmed only from a file whose signature checks. A hand-edited file, or one saved by v1.1.7, asks for the phrase once; saving again with `--save` signs it. The key file is now read before the on-chain questions.
 - Fix: when the server's `fee` lookup failed, the tool used the base fee without a word. The open ledger fee is what `--max-fee` and `--fee-wait` read, so a failed lookup turned the fee-spike guard off for that run. A failed `fee` lookup is now a network error (exit 2).
