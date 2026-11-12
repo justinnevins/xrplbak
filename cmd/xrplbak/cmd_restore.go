@@ -197,15 +197,7 @@ func cmdVerify(args []string) error {
 	case latest.Manifest.Tombstone:
 		fmt.Fprintln(stdout, "  tombstone: earlier backups are retired")
 	case err != nil:
-		var me *chunk.MissingError
-		if errors.As(err, &me) {
-			return fail(exitIncomplete, "%v", err)
-		}
-		var ne *discover.NetworkError
-		if errors.As(err, &ne) {
-			return fail(exitNetwork, "%v", err)
-		}
-		return fail(exitAuth, "%v", err)
+		return fetchFail(err, "")
 	default:
 		fmt.Fprintf(stdout, "  on-chain data: complete, %d chunk(s), %d file(s)\n", len(latest.Manifest.OnChain.Chunks), len(entries))
 	}
@@ -347,15 +339,7 @@ func cmdRestore(args []string) error {
 	}
 	entries, err := discover.Fetch(s.client, s.keys, res, cand)
 	if err != nil {
-		var me *chunk.MissingError
-		if errors.As(err, &me) {
-			return fail(exitIncomplete, "%v", err)
-		}
-		var ne *discover.NetworkError
-		if errors.As(err, &ne) {
-			return fail(exitNetwork, "%v", err)
-		}
-		return fail(exitAuth, "%v", err)
+		return fetchFail(err, "")
 	}
 	var bundle []container.Entry
 	if *bundlePath != "" {
@@ -454,4 +438,20 @@ func prefix(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// fetchFail maps an error from discover.Fetch to its exit code: a missing
+// chunk is an incomplete backup, a network failure is a network error, and
+// anything else failed authentication. prefix starts the message of the
+// first and last; a network error is reported as it is.
+func fetchFail(err error, prefix string) error {
+	var me *chunk.MissingError
+	if errors.As(err, &me) {
+		return fail(exitIncomplete, "%s%v", prefix, err)
+	}
+	var ne *discover.NetworkError
+	if errors.As(err, &ne) {
+		return fail(exitNetwork, "%v", err)
+	}
+	return fail(exitAuth, "%s%v", prefix, err)
 }
