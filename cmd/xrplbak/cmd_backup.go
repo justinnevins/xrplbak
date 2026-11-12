@@ -466,52 +466,92 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 		return err
 	}
 	planReport(p, o)
-	var attestMemo, delegMemo *codec.Memo
+	attestMemo, delegMemo, err := attestationMemos(client, writer, p, att, delegSig, attestPubKey, attestPubSig)
+	if err != nil {
+		return err
+	}
+	useBatch, err := confirmSubmit(client, source, writer, batch, warns, yes)
+	if err != nil {
+		return err
+	}
+	dumpPath, err := runSubmit(o, p, client, writer, out, maxFee, deleteAnchor, useBatch, attestMemo, delegMemo, x)
+	if err != nil {
+		return err
+	}
+	tip, err := printDone(p, out, dumpPath, source, rpcArg, keyPath, writer, att, attestMemo, delegMemo)
+	if err != nil {
+		return err
+	}
+	if x.ReadBack && !p.Manifest.Tombstone {
+		if err := finishReadBack(client, o, writer, p, tip); err != nil {
+			return err
+		}
+	}
+	return saveOrHint(x)
+}
+
+// attestationMemos builds the delegation and attestation memos the run
+// publishes, if any. A public attestation signed by the master key is
+// checked before it is published: it is permanent.
+func attestationMemos(client xrpl.Client, writer *sign.Key, p *backup.Plan, att *attestKey, delegSig, attestPubKey, attestPubSig string) (attestMemo, delegMemo *codec.Memo, err error) {
 	if att != nil {
 		dm, am, err := delegatedMemos(client, writer.Address(), att, delegSig, p)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		delegMemo, attestMemo = dm, am
 	}
 	if attestPubSig != "" {
 		m, err := pubattest.Memo(attestPubKey, p.Manifest.Epoch, p.Manifest.Seq, p.Manifest.BackupID, attestPubSig)
 		if err != nil {
-			return fail(exitUsage, "%v", err)
+			return nil, nil, fail(exitUsage, "%v", err)
 		}
 		// An attestation is permanent. Refuse one that would read as INVALID
 		// to every third party. The string changes with the backup
 		// id, so a signature from an earlier dry run goes stale as soon as
 		// another backup lands in between.
 		if !pubattest.Check(attestPubKey, writer.Address(), p.Manifest.Epoch, p.Manifest.Seq, p.Manifest.BackupID, attestPubSig) {
-			return fail(exitUsage, "--attest-public-sig does not verify under %s for this backup; sign this exact string offline and pass the result:\n  %s", attestPubKey, p.AttestPublicText)
+			return nil, nil, fail(exitUsage, "--attest-public-sig does not verify under %s for this backup; sign this exact string offline and pass the result:\n  %s", attestPubKey, p.AttestPublicText)
 		}
 		attestMemo = &m
 	} else if attestPubKey != "" {
 		fmt.Fprintln(stdout, "  NOTE: no --attest-public-sig given, so no public attestation is published this run")
 	}
+	return attestMemo, delegMemo, nil
+}
+
+// confirmSubmit prints the warnings and the submit summary, decides
+// whether to batch, and asks before anything is sent unless --yes.
+func confirmSubmit(client xrpl.Client, source string, writer *sign.Key, batch string, warns []string, yes bool) (bool, error) {
 	for _, w := range warns {
 		fmt.Fprintln(stdout, "  WARNING:", w)
 	}
 	useBatch, batchNote, err := decideBatch(client, batch)
 	if err != nil {
-		return fail(exitNetwork, "%v", err)
+		return false, fail(exitNetwork, "%v", err)
 	}
 	hr("Submit")
 	fmt.Fprintf(stdout, "  server:  %s\n", source)
 	fmt.Fprintf(stdout, "  account: %s\n", writer.Address())
 	fmt.Fprintf(stdout, "  batch:   %s\n", batchNote)
 	if !yes && !confirm("  Submit these transactions?") {
-		return fail(exitUsage, "cancelled; nothing was submitted. In a script, pass --yes to answer this up front")
+		return false, fail(exitUsage, "cancelled; nothing was submitted. In a script, pass --yes to answer this up front")
 	}
+	return useBatch, nil
+}
+
+// runSubmit sends the backup, resuming from a dump of the same backup
+// when one is there, deletes the anchor when asked, and writes the
+// bundle. It returns the dump path.
+func runSubmit(o backup.Options, p *backup.Plan, client xrpl.Client, writer *sign.Key, out string, maxFee uint64, deleteAnchor, useBatch bool, attestMemo, delegMemo *codec.Memo, x submitExtras) (string, error) {
 	if err := os.MkdirAll(out, 0o700); err != nil {
-		return err
+		return "", err
 	}
 	dumpPath := filepath.Join(out, p.Manifest.BackupID+".dump.json")
 	s := &backup.Submitter{Client: client, Writer: writer, Key: o.Key, MaxFee: maxFee, FeeWait: x.FeeWait, Sleep: submitSleep, DumpOut: dumpPath, Batch: useBatch, AttestMemo: attestMemo, DelegationMemo: delegMemo, Log: func(f string, a ...any) { fmt.Fprintf(stdout, "  "+f+"\n", a...) }}
 	prev, err := loadResume(dumpPath, p.Manifest.BackupID)
 	if err != nil {
-		return fail(exitRefused, "%v", err)
+		return "", fail(exitRefused, "%v", err)
 	}
 	if prev != nil {
 		s.Dump = prev
@@ -521,17 +561,24 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 		if s.Dump != nil && len(s.Dump.Txs) > 0 {
 			fmt.Fprintf(stdout, "  partial progress saved in %s; re-run the same command to resume\n", dumpPath)
 		}
-		return fail(exitNetwork, "%v", err)
+		return "", fail(exitNetwork, "%v", err)
 	}
 	if o.Tombstone && deleteAnchor {
 		fmt.Fprintln(stdout, "  deleting DID anchor")
 		if err := s.DeleteAnchor(); err != nil {
-			return fail(exitNetwork, "%v", err)
+			return "", fail(exitNetwork, "%v", err)
 		}
 	}
 	if err := writeBundle(p, out); err != nil {
-		return err
+		return "", err
 	}
+	return dumpPath, nil
+}
+
+// printDone prints what landed, how to verify it, and the copy hint. It
+// returns the verify command, which the read-back names if it cannot
+// finish.
+func printDone(p *backup.Plan, out, dumpPath, source, rpcArg, keyPath string, writer *sign.Key, att *attestKey, attestMemo, delegMemo *codec.Memo) (string, error) {
 	hr("Done")
 	fmt.Fprintf(stdout, "  dump written:   %s (offline restore source; contains ciphertext only)\n", dumpPath)
 	fmt.Fprintln(stdout, "  keep safe:      the bundle file, the dump file, your recovery words or shares, and the account address")
@@ -552,35 +599,47 @@ func doSubmit(o backup.Options, client xrpl.Client, source string, writer *sign.
 		tip += " --bundle " + filepath.Join(out, p.Manifest.BackupID+".bundle")
 	}
 	fmt.Fprintln(stdout, "  verify anytime: "+tip)
-	if !p.Manifest.Tombstone {
-		// The bundle is the only copy of what stays off the ledger, the
-		// validator token among it. A host that dies with it takes it along.
-		fmt.Fprintln(stdout, "  copy both files off this host now, then check each copy's sha256:")
-		for _, f := range []string{filepath.Join(out, p.Manifest.BackupID+".bundle"), dumpPath} {
-			abs, err := filepath.Abs(f)
-			if err != nil {
-				return err
-			}
-			raw, err := os.ReadFile(filepath.Clean(abs))
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(stdout, "    %s  %s\n", sha256hex(raw), abs)
-		}
+	if p.Manifest.Tombstone {
+		return tip, nil
 	}
-	if x.ReadBack && !p.Manifest.Tombstone {
-		hr("Read-back")
-		n, err := readBack(client, o.Key, writer.Address(), p)
+	// The bundle is the only copy of what stays off the ledger, the
+	// validator token among it. A host that dies with it takes it along.
+	fmt.Fprintln(stdout, "  copy both files off this host now, then check each copy's sha256:")
+	for _, f := range []string{filepath.Join(out, p.Manifest.BackupID+".bundle"), dumpPath} {
+		abs, err := filepath.Abs(f)
 		if err != nil {
-			var ee *exitError
-			if errors.As(err, &ee) && ee.code == exitNetwork {
-				return fail(exitNetwork, "the backup was submitted, but the read-back could not finish: %v. Finish the check with: %s", err, tip)
-			}
-			return err
+			return "", err
 		}
-		fmt.Fprintf(stdout, "  read-back: PASS, %d file(s) byte-identical to what was backed up\n", n)
-		warnChangedFiles(p)
+		raw, err := os.ReadFile(filepath.Clean(abs))
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(stdout, "    %s  %s\n", sha256hex(raw), abs)
 	}
+	return tip, nil
+}
+
+// finishReadBack reads the new backup back from the ledger. A network
+// failure there is not a failed backup: the error names the command that
+// finishes the check.
+func finishReadBack(client xrpl.Client, o backup.Options, writer *sign.Key, p *backup.Plan, tip string) error {
+	hr("Read-back")
+	n, err := readBack(client, o.Key, writer.Address(), p)
+	if err != nil {
+		var ee *exitError
+		if errors.As(err, &ee) && ee.code == exitNetwork {
+			return fail(exitNetwork, "the backup was submitted, but the read-back could not finish: %v. Finish the check with: %s", err, tip)
+		}
+		return err
+	}
+	fmt.Fprintf(stdout, "  read-back: PASS, %d file(s) byte-identical to what was backed up\n", n)
+	warnChangedFiles(p)
+	return nil
+}
+
+// saveOrHint saves the settings with --save, or says --save exists when
+// the run used settings worth saving.
+func saveOrHint(x submitExtras) error {
 	switch {
 	case x.Save:
 		if err := saveSettings(x.SettingsPath, x.Settings); err != nil {
