@@ -67,9 +67,17 @@ func (k *KeyFile) Encode() []byte {
 // derivation and cipher, so a build must refuse a value it does not know.
 const wrapVersion = 1
 
+// Wrapped key file layout: 4-byte magic | 1-byte wrapVersion | salt |
+// AES-GCM ciphertext of the plain key file (zero nonce, keyfileAAD).
+const (
+	wrapSaltLen   = 16
+	wrapSaltStart = 4 + 1
+	wrapHeaderLen = wrapSaltStart + wrapSaltLen
+)
+
 // EncodeWrapped renders the key file encrypted under a passphrase.
 func (k *KeyFile) EncodeWrapped(passphrase []byte) ([]byte, error) {
-	salt := make([]byte, 16)
+	salt := make([]byte, wrapSaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, err
 	}
@@ -93,7 +101,7 @@ func IsWrapped(b []byte) bool { return len(b) > 4 && bytes.Equal(b[:4], wrappedM
 // plain files.
 func DecodeKeyFile(b []byte, passphrase []byte) (*KeyFile, error) {
 	if IsWrapped(b) {
-		if len(b) < 4+1+16+TagLen {
+		if len(b) < wrapHeaderLen+TagLen {
 			return nil, errors.New("key file is truncated")
 		}
 		if b[4] != wrapVersion {
@@ -102,14 +110,14 @@ func DecodeKeyFile(b []byte, passphrase []byte) (*KeyFile, error) {
 		if passphrase == nil {
 			return nil, errors.New("key file is passphrase protected; pass --key-passphrase")
 		}
-		salt := b[5:21]
+		salt := b[wrapSaltStart:wrapHeaderLen]
 		wk, err := pbkdf2.Key(sha256.New, string(passphrase), salt, pbkdf2Iterations, KeyLen)
 		if err != nil {
 			return nil, err
 		}
 		var key [KeyLen]byte
 		copy(key[:], wk)
-		plain, err := gcm(key).Open(nil, make([]byte, nonceLen), b[21:], keyfileAAD)
+		plain, err := gcm(key).Open(nil, make([]byte, nonceLen), b[wrapHeaderLen:], keyfileAAD)
 		if err != nil {
 			// AEAD cannot tell these apart, so the message must not
 			// pick one. Naming only the passphrase sent an operator with
