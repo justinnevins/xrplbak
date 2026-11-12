@@ -1,13 +1,11 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/justinnevins/xrplbak/internal/backup"
-	"github.com/justinnevins/xrplbak/internal/chunk"
 	"github.com/justinnevins/xrplbak/internal/crypto"
 	"github.com/justinnevins/xrplbak/internal/discover"
 	"github.com/justinnevins/xrplbak/internal/restore"
@@ -67,15 +65,7 @@ func readBack(client xrpl.Client, kf *crypto.KeyFile, account string, p *backup.
 	}
 	entries, err := discover.Fetch(client, keys, res, cand)
 	if err != nil {
-		var me *chunk.MissingError
-		if errors.As(err, &me) {
-			return 0, fail(exitIncomplete, "read-back FAILED: %v", err)
-		}
-		var ne *discover.NetworkError
-		if errors.As(err, &ne) {
-			return 0, fail(exitNetwork, "%v", err)
-		}
-		return 0, fail(exitAuth, "read-back FAILED: %v", err)
+		return 0, fetchFail(err, "read-back FAILED: ")
 	}
 	bundle, err := discover.OpenBundle(keys, cand, p.Bundle)
 	if err != nil {
