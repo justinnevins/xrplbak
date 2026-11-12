@@ -75,13 +75,14 @@ func TestSettingsRefuseWhatTheyDoNotKnow(t *testing.T) {
 	}
 }
 
-// TestSavedOnchainNeedsNoPhrase pins that a saved on-chain choice is used
-// without the typed phrase, and says so on its own line. Stdin is empty: if
-// the tool asked, the run would fail.
+// TestSavedOnchainNeedsNoPhrase pins that an on-chain choice saved by this
+// tool (signed with the key file) is used without the typed phrase, and says
+// so on its own line. Stdin is empty: if the tool asked, the run would
+// fail. A hand-written file asks again (F-096).
 func TestSavedOnchainNeedsNoPhrase(t *testing.T) {
 	w := newWorld(t, 41)
 	sp := filepath.Join(filepath.Dir(w.keyFile), settingsName)
-	must(t, os.WriteFile(sp, []byte("comments=onchain\npeers=onchain\n"), 0o600))
+	must(t, saveSettings(sp, settings{Comments: "onchain", Peers: "onchain"}, w.key.WriterSeed[:]))
 	r := w.run("", "backup", "--config", w.cfgPath, "--key", w.keyFile, "--out", t.TempDir())
 	if r.code != exitOK {
 		t.Fatalf("dry run with saved settings: exit %d", r.code)

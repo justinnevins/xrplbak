@@ -63,7 +63,7 @@ Back up again after you change the config. Validator configs change rarely, so a
 xrplbak backup --submit           # then copy the two files it names off the host
 ```
 
-With a saved server, a dry run reads the account from that server to plan the next sequence; it still sends no transaction. The settings file is refused when group or others can write it.
+With a saved server, a dry run reads the account from that server to plan the next sequence; it still sends no transaction. The settings file is refused when group or others can write it. The file is signed with a key from your key file. An on-chain choice in it is taken as already confirmed only when the signature checks, so after a hand edit the next backup asks for the phrase again.
 
 ## Usage
 

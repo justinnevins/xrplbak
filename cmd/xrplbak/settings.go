@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -16,10 +17,13 @@ import (
 // operator makes on every run: the server, the fee cap, and where comments
 // and fixed peers go. It is written only by backup --submit --save, after a
 // backup landed, and only with the choices that run used. An on-chain choice
-// can only reach it from a run in which the operator typed the phrase, or
-// from the file itself. The file is written with mode 0600 and is refused
-// when group or others can write it. Someone who can write the directory
-// can still replace the file, so the directory must be the operator's.
+// can only reach it from a run in which the operator typed the phrase. The
+// file carries a sig line, an HMAC keyed by the writer seed in the key
+// file: an on-chain choice is taken as already confirmed only from a file
+// that verifies (F-096). Someone who can write the directory but not read
+// the key can still edit the file, and then the phrase is asked again. The
+// file is written with mode 0600 and is refused when group or others can
+// write it.
 const settingsName = "xrplbak.settings"
 
 // settings are the saved choices. An empty field is not set.
@@ -82,6 +86,10 @@ func parseSettings(text string) (*settings, error) {
 				return nil, fmt.Errorf("line %d: max-fee must be a whole number of drops above zero, not %q", i+1, v)
 			}
 			s.MaxFee = n
+		case "sig":
+			if b, err := hex.DecodeString(v); err != nil || len(b) != sha256.Size {
+				return nil, fmt.Errorf("line %d: sig must be %d bytes of hex", i+1, sha256.Size)
+			}
 		case "comments", "peers":
 			if v != "bundle" && v != "onchain" {
 				return nil, fmt.Errorf("line %d: %s must be bundle or onchain, not %q", i+1, k, v)
@@ -92,38 +100,62 @@ func parseSettings(text string) (*settings, error) {
 				s.Peers = v
 			}
 		default:
-			return nil, fmt.Errorf("line %d: unknown setting %q (known: rpc, max-fee, comments, peers)", i+1, k)
+			return nil, fmt.Errorf("line %d: unknown setting %q (known: rpc, max-fee, comments, peers, sig)", i+1, k)
 		}
 	}
 	return s, nil
 }
 
+// settingsMAC signs the settings with a key derived from the writer seed,
+// which only a holder of the key file has.
+func settingsMAC(s settings, writerSeed []byte) string {
+	k := sha256.Sum256(append([]byte("xrplbak/v1/settings"), writerSeed...))
+	m := hmac.New(sha256.New, k[:])
+	m.Write([]byte(s.render()))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+// settingsSigned reports whether the file text carries a sig line that
+// verifies for its settings under this writer seed.
+func settingsSigned(text string, s settings, writerSeed []byte) bool {
+	for _, line := range strings.Split(text, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && strings.TrimSpace(k) == "sig" {
+			want := settingsMAC(s, writerSeed)
+			return hmac.Equal([]byte(strings.ToLower(strings.TrimSpace(v))), []byte(want))
+		}
+	}
+	return false
+}
+
 // loadSettings reads the file at path. A missing file is no settings, not
 // an error. Any other problem is an error.
-func loadSettings(path string) (*settings, bool, error) {
+func loadSettings(path string) (*settings, string, bool, error) {
 	st, err := os.Stat(filepath.Clean(path))
 	if errors.Is(err, os.ErrNotExist) {
-		return &settings{}, false, nil
+		return &settings{}, "", false, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	// The file can turn on-chain publishing on without the typed phrase,
 	// so it counts only when its owner alone can write it.
 	if st.Mode().Perm()&0o022 != 0 {
-		return nil, false, fmt.Errorf("file mode %o lets others write it; run \"chmod 600\" on it after you check its content", st.Mode().Perm())
+		return nil, "", false, fmt.Errorf("file mode %o lets others write it; run \"chmod 600\" on it after you check its content", st.Mode().Perm())
 	}
 	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	s, err := parseSettings(string(raw))
-	return s, true, err
+	return s, string(raw), true, err
 }
 
 // saveSettings writes the file owner-only, through a temp file and a rename
-// so a crash never leaves half a file for the next run to refuse.
-func saveSettings(path string, s settings) error {
+// so a crash never leaves half a file for the next run to refuse. With a
+// writer seed it adds the sig line that lets a later run trust its
+// on-chain choices.
+func saveSettings(path string, s settings, writerSeed []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".xrplbak.settings-*")
 	if err != nil {
 		return err
@@ -133,7 +165,11 @@ func saveSettings(path string, s settings) error {
 		tmp.Close()
 		return err
 	}
-	if _, err := tmp.WriteString(s.render()); err != nil {
+	text := s.render()
+	if writerSeed != nil {
+		text += "sig=" + settingsMAC(s, writerSeed) + "\n"
+	}
+	if _, err := tmp.WriteString(text); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -163,6 +199,7 @@ type submitExtras struct {
 	SettingsPath  string
 	SettingsExist bool
 	Settings      settings // the choices this run used
+	WriterSeed    []byte   // signs the saved file
 }
 
 func sha256hex(b []byte) string {
