@@ -315,50 +315,76 @@ func cmdRestore(args []string) error {
 		if !*allowTomb {
 			return fail(exitIncomplete, "the newest backup is a tombstone: the operator retired these backups. Pass --allow-tombstoned to restore the newest real backup anyway")
 		}
-		// Take the newest real backup older than the tombstone that was
-		// chosen, whether that is the newest one or one named by
-		// --backup-id. Candidates are sorted newest first.
-		tomb := cand
-		cand = nil
-		past := false
-		for _, c := range res.Candidates {
-			if c == tomb {
-				past = true
-				continue
-			}
-			if past && !c.Manifest.Tombstone {
-				cand = c
-				break
-			}
-		}
-		if cand == nil {
-			return fail(exitIncomplete, "no backup older than tombstone %s was found", tomb.Manifest.BackupID[:16])
-		}
-		fmt.Fprintf(stdout, "  using backup %s (epoch %d seq %d), the newest one older than tombstone %s\n", cand.Manifest.BackupID[:16], cand.Epoch, cand.Manifest.Seq, tomb.Manifest.BackupID[:16])
-		warnStaleEpoch(res, cand)
-	}
-	entries, err := discover.Fetch(s.client, s.keys, res, cand)
-	if err != nil {
-		return fetchFail(err, "")
-	}
-	var bundle []container.Entry
-	if *bundlePath != "" {
-		b, err := os.ReadFile(*bundlePath)
-		if err != nil {
+		if cand, err = olderThanTombstone(res, cand); err != nil {
 			return err
 		}
-		bundle, err = discover.OpenBundle(s.keys, cand, b)
-		if err != nil {
-			return fail(exitAuth, "bundle: %v", err)
-		}
 	}
-	plan, err := restore.Build(cand.Manifest, entries, bundle)
+	plan, err := buildRestorePlan(s, res, cand, *bundlePath)
 	if err != nil {
-		return fail(exitRefused, "%v", err)
+		return err
 	}
 	// Same line verify prints. A team attestation is reported, never
 	// enforced: the bytes are authenticated by the backup key either way.
 	reportAttestation(cand.Manifest)
+	reportRestorePlan(plan, *asJSON)
+	if !*write {
+		return restoreDryRun(plan)
+	}
+	return restoreWrite(plan, *target, *force, *yes)
+}
+
+// olderThanTombstone takes the newest real backup older than the tombstone
+// that was chosen, whether that is the newest one or one named by
+// --backup-id. Candidates are sorted newest first.
+func olderThanTombstone(res *discover.Result, tomb *discover.Candidate) (*discover.Candidate, error) {
+	var cand *discover.Candidate
+	past := false
+	for _, c := range res.Candidates {
+		if c == tomb {
+			past = true
+			continue
+		}
+		if past && !c.Manifest.Tombstone {
+			cand = c
+			break
+		}
+	}
+	if cand == nil {
+		return nil, fail(exitIncomplete, "no backup older than tombstone %s was found", tomb.Manifest.BackupID[:16])
+	}
+	fmt.Fprintf(stdout, "  using backup %s (epoch %d seq %d), the newest one older than tombstone %s\n", cand.Manifest.BackupID[:16], cand.Epoch, cand.Manifest.Seq, tomb.Manifest.BackupID[:16])
+	warnStaleEpoch(res, cand)
+	return cand, nil
+}
+
+// buildRestorePlan fetches the backup's on-chain data, opens the bundle
+// when one is named, and builds the files to write.
+func buildRestorePlan(s *source, res *discover.Result, cand *discover.Candidate, bundlePath string) (*restore.Plan, error) {
+	entries, err := discover.Fetch(s.client, s.keys, res, cand)
+	if err != nil {
+		return nil, fetchFail(err, "")
+	}
+	var bundle []container.Entry
+	if bundlePath != "" {
+		b, err := os.ReadFile(bundlePath) // #nosec G304 -- the operator names the bundle file with --bundle
+		if err != nil {
+			return nil, err
+		}
+		bundle, err = discover.OpenBundle(s.keys, cand, b)
+		if err != nil {
+			return nil, fail(exitAuth, "bundle: %v", err)
+		}
+	}
+	plan, err := restore.Build(cand.Manifest, entries, bundle)
+	if err != nil {
+		return nil, fail(exitRefused, "%v", err)
+	}
+	return plan, nil
+}
+
+// reportRestorePlan lists each file and whether it is complete, the steps
+// to take before starting the server, and the same as JSON with --json.
+func reportRestorePlan(plan *restore.Plan, asJSON bool) {
 	hr("Files")
 	partial := false
 	for _, f := range plan.Files {
@@ -385,7 +411,7 @@ func cmdRestore(args []string) error {
 			fmt.Fprintf(stdout, "  %d. %s\n", i+1, t)
 		}
 	}
-	if *asJSON {
+	if asJSON {
 		type row struct {
 			Path, Source string
 			Complete     bool
@@ -397,21 +423,28 @@ func cmdRestore(args []string) error {
 		b, _ := json.MarshalIndent(map[string]any{"files": rows, "todo": plan.Todo}, "", " ")
 		fmt.Fprintln(stdout, string(b))
 	}
-	if !*write {
-		dir, err := plan.WriteTemp()
-		if err != nil {
-			return fail(exitWrite, "%v", err)
-		}
-		hr("Dry run")
-		fmt.Fprintf(stdout, "  files written under %s\n", dir)
-		fmt.Fprintln(stdout, "  Inspect them. Then re-run with --write --target /etc/xrpld to place them.")
-		fmt.Fprintln(stdout, "  The files keep their backed-up mode. Owner and group are not restored.")
-		return nil
+}
+
+// restoreDryRun writes the files under a temporary directory for the
+// operator to inspect.
+func restoreDryRun(plan *restore.Plan) error {
+	dir, err := plan.WriteTemp()
+	if err != nil {
+		return fail(exitWrite, "%v", err)
 	}
-	if !*yes && !confirm(fmt.Sprintf("  Write %d file(s) into %s?", len(plan.Files), *target)) {
+	hr("Dry run")
+	fmt.Fprintf(stdout, "  files written under %s\n", dir)
+	fmt.Fprintln(stdout, "  Inspect them. Then re-run with --write --target /etc/xrpld to place them.")
+	fmt.Fprintln(stdout, "  The files keep their backed-up mode. Owner and group are not restored.")
+	return nil
+}
+
+// restoreWrite places the files into target after asking, unless --yes.
+func restoreWrite(plan *restore.Plan, target string, force, yes bool) error {
+	if !yes && !confirm(fmt.Sprintf("  Write %d file(s) into %s?", len(plan.Files), target)) {
 		return fail(exitUsage, "cancelled; nothing was written. In a script, pass --yes to answer this up front")
 	}
-	written, err := plan.WriteTarget(*target, *force)
+	written, err := plan.WriteTarget(target, force)
 	if err != nil {
 		return fail(exitWrite, "%v", err)
 	}
