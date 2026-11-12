@@ -18,10 +18,10 @@ RRK is 32 random bytes shown as 24 BIP39 words or split with Shamir over GF(2^8)
 ## Container (XBC1)
 
 ```
-"XBC1" | u32 count | entries (sorted by path)
+"XBC1" | u32 count | entries (sorted by path when written; a reader does not rely on the order)
 entry: u16 pathLen | path | u32 mode | u64 size | sha256(32) | data
 ```
-Then deflate level 9, then pad to a multiple of 960 bytes with the pad length in the last two bytes.
+Then deflate level 9, then pad with zero bytes to a multiple of 960. The last two bytes hold how many bytes to strip from the end: the zero padding plus those two bytes (2 to 961).
 
 ## AEAD
 
@@ -43,7 +43,7 @@ AccountSet with no fields carries one memo. MemoType is `xrplbak/v1/c` (chunk) o
 chunk:    MemoData = u8 1 | backup_id(16) | u16 index | u16 total | ciphertext
 manifest: MemoData = u8 1 | backup_id(16) | u16 index | u16 total | nonce(10) | ciphertext
 ```
-Chunk plaintext is 960 bytes, ciphertext 976, MemoData 997, serialized Memos 1018 bytes (limit 1024). At most 8 chunks per backup. Manifest parts hold 944 plaintext bytes (MemoData at most 991). Discovery groups manifest parts by (backup_id, nonce) and keeps every ciphertext seen per index, so junk posted with a stolen writer key cannot shadow a real part.
+Chunk plaintext is 960 bytes, ciphertext 976, MemoData 997, serialized Memos 1018 bytes (limit 1024). At most 8 chunks per backup. Manifest parts hold 944 plaintext bytes (MemoData at most 991), and a backup has at most 16 manifest parts: backup refuses to build more, and discovery does not open a larger set and warns about it. Discovery groups manifest parts by (backup_id, nonce) and keeps every ciphertext seen per index, so junk posted with a stolen writer key cannot shadow a real part.
 
 ## Manifest (plaintext JSON, sorted keys, no whitespace)
 

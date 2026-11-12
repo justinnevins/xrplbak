@@ -1,8 +1,12 @@
 // Package discover finds and authenticates backups for an account. It is
-// shared by verify and restore. Order of trust:
+// shared by verify and restore.
 //
-//  1. DID anchor (state, no history needed) -> manifest tx -> chunks.
-//  2. Full account_tx scan for manifest memos, authenticated one by one.
+// Backups are found by one account_tx scan for manifest memos, each
+// authenticated with the key. The DID anchor (state, no history needed)
+// does not fetch anything on its own: when it authenticates, it raises the
+// epoch the search starts at, it must agree with the manifest it names,
+// and a backup it names that the scan did not find makes the result
+// incomplete. Its manifest tx hash appears only in messages.
 //
 // The scan always runs so a moved or deleted anchor cannot hide a newer
 // backup. The newest authenticated (epoch, seq) wins.

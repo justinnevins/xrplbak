@@ -4,8 +4,11 @@
 //	"XBC1" | u32 count | entries...
 //	entry: u16 pathLen | path | u32 mode | u64 size | 32-byte sha256 | data
 //
-// Entries are sorted by path. No timestamps, owners, or symlinks, so the
-// same files always produce the same bytes.
+// Encode sorts entries by path, masks each mode with 0o7777 and
+// refuses a path named twice. No timestamps, owners, or symlinks, so the
+// same files always produce the same bytes. Decode checks each entry's
+// hash but not the order, the mode or duplicates: restore refuses a path
+// named twice, and the backup key authenticates the whole container.
 package container
 
 import (
@@ -111,7 +114,8 @@ func Decode(b []byte) ([]Entry, error) {
 }
 
 // Pack compresses and pads to a BlockLen multiple. The last two bytes hold
-// the pad length (1..BlockLen) so Unpack can strip it.
+// how many bytes Unpack strips from the end: the zero padding plus these
+// two bytes, so 2..BlockLen+1.
 func Pack(raw []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	w, err := flate.NewWriter(&buf, flate.BestCompression)
