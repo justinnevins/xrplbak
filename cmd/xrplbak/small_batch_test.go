@@ -82,7 +82,7 @@ func TestResumeRefusesADamagedDump(t *testing.T) {
 func TestSettingsFileOthersCanWriteIsRefused(t *testing.T) {
 	w := newWorld(t, 41)
 	sp := filepath.Join(filepath.Dir(w.keyFile), settingsName)
-	must(t, os.WriteFile(sp, []byte("comments=onchain\n"), 0o600))
+	must(t, saveSettings(sp, settings{Comments: "onchain"}, w.key.WriterSeed[:]))
 	for _, mode := range []os.FileMode{0o620, 0o602, 0o666} {
 		must(t, os.Chmod(sp, mode))
 		r := w.run("", "backup", "--config", w.cfgPath, "--key", w.keyFile, "--out", t.TempDir())

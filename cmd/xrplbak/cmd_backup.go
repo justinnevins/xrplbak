@@ -120,15 +120,18 @@ func cmdBackup(args []string) error {
 		return err
 	}
 	settingsPath := filepath.Join(filepath.Dir(keyPath), settingsName)
-	settingsExist, savedOnchain, err := applySettings(f, settingsPath)
+	saved, settingsText, settingsExist, err := readSettings(f, settingsPath)
 	if err != nil {
 		return err
 	}
-	mode, peersOn, err := backupModes(f, savedOnchain, settingsPath)
-	if err != nil {
-		return err
-	}
+	// The key file is read before the on-chain questions: it decides
+	// whether the settings file is one this tool signed (F-096).
 	kf, writer, err := loadWriter(keyPath, f.keyPass)
+	if err != nil {
+		return err
+	}
+	savedOnchain := applySettings(f, saved, settingsSigned(settingsText, *saved, kf.WriterSeed[:]), settingsPath)
+	mode, peersOn, err := backupModes(f, savedOnchain, settingsPath)
 	if err != nil {
 		return err
 	}
@@ -242,16 +245,24 @@ func checkAttestFlags(f *backupFlags) error {
 	return nil
 }
 
-// applySettings fills in, from the saved settings file, what the command
-// line left out. savedOnchain names each on-chain choice that came from the
-// file.
-func applySettings(f *backupFlags, settingsPath string) (exist bool, savedOnchain map[string]bool, err error) {
-	saved := &settings{}
-	if !f.noSettings {
-		if saved, exist, err = loadSettings(settingsPath); err != nil {
-			return false, nil, fail(exitUsage, "%s: %v. Fix the file, or pass --no-settings to ignore it", settingsPath, err)
-		}
+// readSettings loads the saved settings file and its text, unless
+// --no-settings. A file that cannot be used stops the run.
+func readSettings(f *backupFlags, settingsPath string) (*settings, string, bool, error) {
+	if f.noSettings {
+		return &settings{}, "", false, nil
 	}
+	saved, text, exist, err := loadSettings(settingsPath)
+	if err != nil {
+		return nil, "", false, fail(exitUsage, "%s: %v. Fix the file, or pass --no-settings to ignore it", settingsPath, err)
+	}
+	return saved, text, exist, nil
+}
+
+// applySettings fills in, from the saved settings, what the command line
+// left out. savedOnchain names each on-chain choice that came from a file
+// this tool signed; an on-chain choice from an unsigned or edited file is
+// asked again.
+func applySettings(f *backupFlags, saved *settings, signed bool, settingsPath string) (savedOnchain map[string]bool) {
 	if !f.set["rpc"] && saved.RPC != "" {
 		f.rpcURL = saved.RPC
 	}
@@ -261,20 +272,24 @@ func applySettings(f *backupFlags, settingsPath string) (exist bool, savedOnchai
 	savedOnchain = map[string]bool{}
 	if !f.set["comments"] && saved.Comments != "" {
 		f.comments = saved.Comments
-		savedOnchain["comments"] = saved.Comments == "onchain"
+		savedOnchain["comments"] = saved.Comments == "onchain" && signed
 	}
 	if !f.set["peers"] && saved.Peers != "" {
 		f.peers = saved.Peers
-		savedOnchain["peers"] = saved.Peers == "onchain"
+		savedOnchain["peers"] = saved.Peers == "onchain" && signed
 	}
-	return exist, savedOnchain, nil
+	if !signed && (f.comments == "onchain" && !f.set["comments"] || f.peers == "onchain" && !f.set["peers"]) {
+		fmt.Fprintf(stdout, "  %s is not signed by this key file (edited by hand, or saved by an older release); its on-chain choice needs the phrase again\n", settingsPath)
+	}
+	return savedOnchain
 }
 
 // backupModes resolves --comments and --peers, asking for the typed
 // confirmation an on-chain choice needs.
 func backupModes(f *backupFlags, savedOnchain map[string]bool, settingsPath string) (redact.Mode, bool, error) {
-	// An on-chain choice read from the file was typed and acknowledged in
-	// the run that saved it, so it is not asked again. It is named instead.
+	// An on-chain choice read from a file this tool signed was typed and
+	// acknowledged in the run that saved it, so it is not asked again. It is
+	// named instead.
 	mode, err := commentsMode(f.comments, !savedOnchain["comments"])
 	if err != nil {
 		return mode, false, err
@@ -364,7 +379,7 @@ func runBackup(f *backupFlags, o backup.Options, att *attestKey, kf *crypto.KeyF
 			if seqErr != nil && !f.forceSeq {
 				return fail(exitNetwork, "could not read existing backups (%v). Fix the server or pass --force-seq to submit as seq 1 anyway", seqErr)
 			}
-			x := submitExtras{FeeWait: f.feeWait, ReadBack: !f.noReadBack, Save: f.save, SettingsPath: settingsPath, SettingsExist: settingsExist,
+			x := submitExtras{FeeWait: f.feeWait, ReadBack: !f.noReadBack, Save: f.save, SettingsPath: settingsPath, SettingsExist: settingsExist, WriterSeed: kf.WriterSeed[:],
 				Settings: settings{RPC: f.rpcURL, MaxFee: f.maxFee, Comments: f.comments, Peers: f.peers}}
 			return doSubmit(o, client, source, writer, f.out, f.maxFee, f.deleteAnchor, f.yes, f.batch, f.attestPubKey, f.attestPubSig, warns, att, f.delegSig, f.rpcURL, keyPath, x)
 		}
@@ -642,7 +657,7 @@ func finishReadBack(client xrpl.Client, o backup.Options, writer *sign.Key, p *b
 func saveOrHint(x submitExtras) error {
 	switch {
 	case x.Save:
-		if err := saveSettings(x.SettingsPath, x.Settings); err != nil {
+		if err := saveSettings(x.SettingsPath, x.Settings, x.WriterSeed); err != nil {
 			return fail(exitWrite, "the backup landed, but %s could not be saved: %v", x.SettingsPath, err)
 		}
 		fmt.Fprintf(stdout, "  settings saved: %s. Next time, run: xrplbak backup --submit\n", x.SettingsPath)

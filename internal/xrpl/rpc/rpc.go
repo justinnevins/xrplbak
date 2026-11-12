@@ -309,7 +309,14 @@ func (c *Client) ServerInfo() (*xrpl.ServerState, error) {
 		st.BaseFeeDrops = 10
 	}
 	st.OpenLedgerFee = st.BaseFeeDrops
-	if fee, err := c.call("fee", nil); err == nil {
+	// The open ledger fee is what the fee-spike guard reads. A lookup that
+	// fails is an error: using the base fee in its place turns the guard
+	// off without a word.
+	fee, err := c.call("fee", nil)
+	if err != nil {
+		return nil, fmt.Errorf("fee: %w", err)
+	}
+	{
 		var d struct {
 			OpenLedgerFee string `json:"open_ledger_fee"`
 		}
