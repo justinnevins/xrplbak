@@ -353,6 +353,11 @@ func TestDoneNamesTheFilesToCopy(t *testing.T) {
 	if !strings.Contains(out, "copy both files off this host now") {
 		t.Errorf("no copy line:\n%s", out)
 	}
+	// The copy is hand work unless the operator knows there is one step
+	// for it. The line names the doc that sets it up.
+	if !strings.Contains(out, "docs/off-host-copies.md") {
+		t.Errorf("the copy lines do not point at docs/off-host-copies.md:\n%s", out)
+	}
 	for _, ext := range []string{".bundle", ".dump.json"} {
 		matches, _ := filepath.Glob(filepath.Join(dir, "*"+ext))
 		if len(matches) != 1 {
