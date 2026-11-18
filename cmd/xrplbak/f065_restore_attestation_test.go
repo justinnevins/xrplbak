@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/ed25519"
 	"encoding/hex"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ import (
 // a restore from a backup whose attestation is INVALID exited 0 silently.
 // restore must print the same line verify prints, valid or INVALID.
 func TestF065RestoreReportsAttestation(t *testing.T) {
+	posix.Need(t)
 	for _, valid := range []bool{true, false} {
 		w := newWorld(t, 31)
 		vpk, priv := validatorKey(t)

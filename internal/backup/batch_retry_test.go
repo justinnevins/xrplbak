@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 // the fake ledger before the run. It returns every sleep the run asked
 // for and the run's error.
 func batchRun(t *testing.T, setup func(*fake.Ledger)) (*env, []time.Duration, error) {
+	posix.Need(t)
 	t.Helper()
 	e := newEnv(t)
 	e.ledger.Batch = true

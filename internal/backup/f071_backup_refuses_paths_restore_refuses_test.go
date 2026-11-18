@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 // could be paid for and submitted that no restore would ever accept. The
 // refusal belongs at plan time, before anything is sent.
 func TestF071BuildRefusesAFileNameRestoreWouldRefuse(t *testing.T) {
+	posix.Need(t)
 	cfgBody, err := os.ReadFile(fixtures + "validator-full.cfg")
 	if err != nil {
 		t.Fatal(err)

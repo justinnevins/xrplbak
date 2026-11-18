@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,7 @@ import (
 // TestIncludeKeyMaterialRefusedInAnyCase pins that an --include file with
 // a PEM header or secret_key is refused whatever its letter case.
 func TestIncludeKeyMaterialRefusedInAnyCase(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	for i, body := range []string{
 		"-----begin rsa private key-----\nMIIBogIBAAJBALRiMLAH\n-----end rsa private key-----\n",

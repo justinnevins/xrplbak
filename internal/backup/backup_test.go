@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,7 @@ func (e *env) submit(t *testing.T, p *Plan) *Submitter {
 }
 
 func TestBuildDeterministic(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	a, err := Build(e.opts(t, 1))
 	if err != nil {
@@ -95,6 +97,7 @@ func TestBuildDeterministic(t *testing.T) {
 }
 
 func TestRefusesSeedConfig(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	o := e.opts(t, 1)
 	o.ConfigPath = fixtures + "node-with-seed.cfg"
@@ -111,6 +114,7 @@ func TestRefusesSeedConfig(t *testing.T) {
 }
 
 func TestOversizedConfig(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	big := filepath.Join(t.TempDir(), "big.cfg")
 	var sb strings.Builder
@@ -225,6 +229,7 @@ func TestEndToEnd(t *testing.T) {
 }
 
 func TestSupersedeRollbackAndTombstone(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	keys := discover.RootKeys{Root: e.root}
 	p1, _ := Build(e.opts(t, 1))
@@ -277,6 +282,7 @@ func TestSupersedeRollbackAndTombstone(t *testing.T) {
 }
 
 func TestTruncatedHistory(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	keys := discover.RootKeys{Root: e.root}
 	p, _ := Build(e.opts(t, 1))
@@ -302,6 +308,7 @@ func TestTruncatedHistory(t *testing.T) {
 }
 
 func TestResumeAfterInterruption(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	p, _ := Build(e.opts(t, 1))
 	dumpPath := filepath.Join(e.dir, "partial.json")
@@ -329,6 +336,7 @@ func TestResumeAfterInterruption(t *testing.T) {
 }
 
 func TestSubmitFailures(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	p, _ := Build(e.opts(t, 1))
 	e.ledger.Fee = 9000

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 // would ignore it, and every later command would report the previous backup
 // as the newest, exit 0. Before the fix Build accepted this plan.
 func TestBackupRefusesManifestOverPartLimit(t *testing.T) {
+	posix.Need(t)
 	w := newWorld(t, 11)
 	var incs []string
 	for i := 0; i < 150; i++ {
@@ -46,6 +48,7 @@ func TestBackupRefusesManifestOverPartLimit(t *testing.T) {
 // Just under the cap still builds, so the refusal is the cap and not an
 // earlier limit.
 func TestBackupAcceptsManifestAtPartLimit(t *testing.T) {
+	posix.Need(t)
 	w := newWorld(t, 12)
 	var incs []string
 	for i := 0; i < 60; i++ {

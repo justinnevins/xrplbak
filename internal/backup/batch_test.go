@@ -3,6 +3,7 @@ package backup
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,6 +117,7 @@ func TestBatchTailIsAtomic(t *testing.T) {
 // ledger holds nothing from it, Submit says so, and a second Submit
 // finishes the job.
 func TestBatchFailureLeavesNoHalfManifest(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	e.ledger.Batch = true
 	p, err := Build(e.opts(t, 1))
@@ -228,6 +230,7 @@ func TestBatchChunksFirstThenAtomicTail(t *testing.T) {
 // TestBatchEightFitsOneBatch: rippled's limit is eight inner transactions,
 // and a backup that needs exactly eight is still one transaction.
 func TestBatchEightFitsOneBatch(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	e.ledger.Batch = true
 	o := e.opts(t, 1)

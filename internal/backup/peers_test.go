@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 // a public fixed peer goes on-chain only when asked, and a private one
 // never does.
 func TestBuildPeersOnChain(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	cfgPath := filepath.Join(e.dir, "xrpld.cfg")
 	conf := "[server]\nport_peer\n\n[port_peer]\nport = 51235\nip = 0.0.0.0\nprotocol = peer\n\n[ips_fixed]\nr.ripple.com 51235\n10.20.30.40 2459\n"

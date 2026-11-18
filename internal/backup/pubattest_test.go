@@ -2,6 +2,7 @@ package backup
 
 import (
 	"encoding/hex"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"path/filepath"
 	"testing"
 	"time"
@@ -48,6 +49,7 @@ func findAttestation(t *testing.T, e *env) (pubattest.Record, bool) {
 // on the DID anchor transaction and verifies from the ledger with only the
 // account, in both the batched and the sequential path.
 func TestPublicAttestationRidesTheAnchor(t *testing.T) {
+	posix.Need(t)
 	for _, tc := range []struct {
 		name  string
 		batch bool

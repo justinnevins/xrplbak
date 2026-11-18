@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/ed25519"
 	"encoding/hex"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -51,6 +52,7 @@ func TestTombstoneRefusesAttestationFlags(t *testing.T) {
 // The same rule below the flag layer: doSubmit must not publish a public
 // attestation next to a tombstone, even with a signature that verifies.
 func TestTombstoneSubmitRefusesPublicAttestation(t *testing.T) {
+	posix.Need(t)
 	w := newWorld(t, 94)
 	vpk, priv := validatorKey(t)
 	o := backup.Options{ConfigPath: w.cfgPath, Key: w.key, Seq: 2, Tombstone: true, AttestPublicVPK: vpk}

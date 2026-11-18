@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 // A tombstone stores no files. Build refuses an include list with it, so a
 // caller below the command line cannot have a file dropped in silence.
 func TestTombstoneBuildRefusesIncludes(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	cfgPath := filepath.Join(e.dir, "xrpld.cfg")
 	if err := os.WriteFile(cfgPath, []byte("[node_size]\nmedium\n"), 0o600); err != nil {

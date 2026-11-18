@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,6 +30,7 @@ func feesPaid(w *world, from int) (n int, total uint64) {
 // planFor builds a plan whose manifest needs more than one part: the config
 // spans chunks and the includes have long basenames.
 func planFor(t *testing.T, w *world, batch bool) *backup.Plan {
+	posix.Need(t)
 	t.Helper()
 	var incs []string
 	for i := 0; i < 20; i++ {

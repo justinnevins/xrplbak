@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -96,6 +97,7 @@ func serve(l *fake.Ledger) *httptest.Server {
 func jsonNum(v uint64) string { return strconv.FormatUint(v, 10) }
 
 func TestOverHTTP(t *testing.T) {
+	posix.Need(t)
 	l := fake.New()
 	writer, _ := sign.KeyFromSeed(bytes.Repeat([]byte{9}, 16))
 	l.Fund(writer.Address(), 3_000_000)

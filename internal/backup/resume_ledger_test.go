@@ -3,6 +3,7 @@ package backup
 import (
 	"errors"
 	"fmt"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,6 +23,7 @@ import (
 // resumeWith runs the first backup against e.ledger, then submits the same
 // plan again against target with the dump the first run wrote.
 func resumeWith(t *testing.T, e *env, target xrpl.Client, batch bool) (*Plan, error) {
+	posix.Need(t)
 	t.Helper()
 	e.ledger.Batch = batch
 	p, _ := Build(e.opts(t, 1))
@@ -79,6 +81,7 @@ func TestResumeOnAnotherLedgerResendsEverything(t *testing.T) {
 }
 
 func TestResumeIgnoresRecordedTxThatFailedOnTheLedger(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	p, _ := Build(e.opts(t, 1))
 	first := e.submit(t, p)
@@ -101,6 +104,7 @@ func TestResumeIgnoresRecordedTxThatFailedOnTheLedger(t *testing.T) {
 }
 
 func TestResumeIgnoresRecordedTxNotYetValidated(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	p, _ := Build(e.opts(t, 1))
 	first := e.submit(t, p)
@@ -121,6 +125,7 @@ func TestResumeIgnoresRecordedTxNotYetValidated(t *testing.T) {
 }
 
 func TestResumeIgnoresRecordedTxByAnotherAccount(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	p, _ := Build(e.opts(t, 1))
 	first := e.submit(t, p)
@@ -147,6 +152,7 @@ type txDown struct{ *fake.Ledger }
 func (txDown) Tx(string) (*xrpl.TxRecord, error) { return nil, errors.New("connection refused") }
 
 func TestResumeRefusesWhenTheLedgerCannotBeAsked(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	p, _ := Build(e.opts(t, 1))
 	first := e.submit(t, p)

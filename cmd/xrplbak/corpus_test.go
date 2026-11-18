@@ -17,6 +17,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +58,7 @@ type world struct {
 // rootByte makes two worlds differ in every key.
 func newWorld(t *testing.T, rootByte byte) *world {
 	t.Helper()
+	posix.Need(t)
 	w := &world{t: t, dir: t.TempDir()}
 	for i := range w.root {
 		w.root[i] = byte(i)*3 + rootByte
@@ -262,6 +264,7 @@ type corpusCase struct {
 }
 
 func TestAdversarialCorpus(t *testing.T) {
+	posix.Need(t)
 	cases := []corpusCase{
 		// ---- one flipped ciphertext byte, per layer -------------------------
 		{
