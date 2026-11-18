@@ -3,6 +3,7 @@ package restore
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -95,6 +96,16 @@ func FuzzAcceptedPathStaysInsideRoot(f *testing.F) {
 		}
 		if filepath.IsAbs(rel) {
 			t.Fatalf("safeRelative(%q) returned absolute %q", p, rel)
+		}
+		// A POSIX host stores every name checkPath accepts. The host-name
+		// rule exists for Windows and must not refuse anything here.
+		if runtime.GOOS != "windows" {
+			if err := hostKeeps(rel); err != nil {
+				t.Fatalf("hostKeeps refused %q on a POSIX host: %v", rel, err)
+			}
+			if err := hostKeeps(filepath.Base(filepath.Clean(p))); err != nil {
+				t.Fatalf("hostKeeps refused the base name of %q on a POSIX host: %v", p, err)
+			}
 		}
 		dst := filepath.Clean(filepath.Join(root, rel))
 		if dst == root || !strings.HasPrefix(dst, root+string(filepath.Separator)) {

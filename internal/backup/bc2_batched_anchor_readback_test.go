@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"path/filepath"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ func (otherDID) LedgerEntryDID(string) ([]byte, error) {
 // anchor was. A different anchor went into the dump, the offline restore
 // source, and the run reported success.
 func TestBatchedSubmitChecksTheAnchorItReadsBack(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	e.ledger.Batch = true
 	p, err := Build(e.opts(t, 1))

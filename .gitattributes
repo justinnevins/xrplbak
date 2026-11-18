@@ -1,0 +1,3 @@
+# Byte-exact fixtures and tests: git must never rewrite a line ending,
+# on any platform. A Windows checkout would otherwise turn LF into CRLF.
+* -text

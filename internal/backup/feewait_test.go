@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ func (s *spikyLedger) ServerInfo() (*xrpl.ServerState, error) {
 // for both the batched and the one-at-a-time path, and that nothing is
 // submitted while the fee is above the cap.
 func TestFeeWaitOutlastsASpike(t *testing.T) {
+	posix.Need(t)
 	for _, batch := range []bool{true, false} {
 		e := newEnv(t)
 		e.ledger.Batch = batch
@@ -62,6 +64,7 @@ func TestFeeWaitOutlastsASpike(t *testing.T) {
 // --fee-wait still refuses, with nothing submitted, and that a zero wait
 // refuses at once, as before v1.1.7.
 func TestFeeWaitGivesUpAndSubmitsNothing(t *testing.T) {
+	posix.Need(t)
 	for _, wait := range []time.Duration{0, 2 * time.Minute} {
 		e := newEnv(t)
 		e.ledger.Batch = true

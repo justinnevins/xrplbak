@@ -10,6 +10,7 @@ package main
 import (
 	"crypto/ed25519"
 	"encoding/hex"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"strings"
 	"testing"
 
@@ -42,6 +43,7 @@ func attestSubmit(t *testing.T, w *world, vpk, sigHex string) (error, int) {
 }
 
 func TestSubmitRefusesAnAttestationThatDoesNotVerify(t *testing.T) {
+	posix.Need(t)
 	w := newWorld(t, 1)
 	vpk, priv := validatorKey(t)
 	p, err := backup.Build(backup.Options{ConfigPath: w.cfgPath, ValidatorsPath: w.valPath, Key: w.key, Seq: 1, AttestPublicVPK: vpk})

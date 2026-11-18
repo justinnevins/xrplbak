@@ -4,6 +4,7 @@ package backup
 
 import (
 	"bytes"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,7 @@ import (
 
 // Finding 1: a resumed run must not re-seal the manifest under a used nonce.
 func TestResumeNeverReencryptsManifest(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	p, _ := Build(e.opts(t, 1))
 	dumpPath := filepath.Join(e.dir, "d.json")
@@ -67,6 +69,7 @@ func TestResumeNeverReencryptsManifest(t *testing.T) {
 
 // Finding 2: junk memos with the real backup id must not shadow real parts.
 func TestJunkPartCannotShadowRealManifest(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	keys := discover.RootKeys{Root: e.root}
 	p1, _ := Build(e.opts(t, 1))

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,6 +99,7 @@ func FuzzEveryBuiltPlanIsDiscovered(f *testing.F) {
 // fuzzPlan writes one host's files and builds a plan over them. It returns
 // nil when Build refuses.
 func fuzzPlan(t *testing.T, extra []byte, sntp, includes, nameLen int, flags uint8, seq uint32) (*Plan, *env, discover.Keys) {
+	posix.Need(t)
 	t.Helper()
 	e := &env{ledger: fake.New()}
 	for i := range e.root {

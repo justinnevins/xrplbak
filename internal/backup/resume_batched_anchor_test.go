@@ -2,6 +2,7 @@ package backup
 
 import (
 	"errors"
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,6 +34,7 @@ func (c *cutAt) Submit(blob []byte) (string, error) {
 // connection on its last transaction, the DID anchor. It returns the dump
 // that run left behind: every chunk and the whole manifest, no anchor.
 func interruptedBeforeAnchor(t *testing.T, e *env) *dump.Dump {
+	posix.Need(t)
 	t.Helper()
 	// A twin run counts the transactions, so the cut lands on the anchor.
 	twin := newEnv(t)
@@ -148,6 +150,7 @@ func TestResumeBatchedSendsOnlyTheAnchor(t *testing.T) {
 // names. A batched resume must refuse: the manifest on the ledger carries
 // the old chunk's tx hash, and a resent chunk would get a new one.
 func TestResumeBatchedRefusesAManifestWithoutItsChunks(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	d := interruptedBeforeAnchor(t, e)
 	d.Txs = d.Txs[1:] // forget the first chunk
@@ -237,6 +240,7 @@ func resumeAfterAPartialManifest(t *testing.T, batch bool) {
 // decode error, so a hash that is not hex became an anchor naming
 // transaction 000...0, published as if it were good.
 func TestF076AnchorRefusesAManifestHashThatIsNotHex(t *testing.T) {
+	posix.Need(t)
 	for _, bad := range []string{"", "not hex", "ABCD", strings.Repeat("A", 63), strings.Repeat("A", 66), strings.Repeat("Z", 64)} {
 		e := newEnv(t)
 		p, _ := Build(e.opts(t, 1))

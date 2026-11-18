@@ -1,6 +1,7 @@
 package restore
 
 import (
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 // their backed-up mode. The write also went through a symlink at the
 // destination to whatever it pointed at, outside the target directory.
 func TestF079ForceOverwriteAppliesTheBackedUpMode(t *testing.T) {
+	posix.NeedModes(t)
 	dir := t.TempDir()
 	dst := filepath.Join(dir, "xrpld.cfg")
 	if err := os.WriteFile(dst, []byte("old, world readable\n"), 0o644); err != nil {
@@ -42,6 +44,7 @@ func TestF079ForceOverwriteAppliesTheBackedUpMode(t *testing.T) {
 // The mode is the backed-up one in both directions: a file backed up as
 // 0640 over an existing 0600 file ends 0640.
 func TestF079ModeIsExactForNewAndExistingFiles(t *testing.T) {
+	posix.NeedModes(t)
 	for _, mode := range []uint32{0o600, 0o640, 0o644, 0o400} {
 		dir := t.TempDir()
 		p := &Plan{Files: []File{{Path: "/etc/xrpld/a.cfg", Mode: mode, Data: []byte("a\n")}}}

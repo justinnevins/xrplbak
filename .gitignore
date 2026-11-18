@@ -4,3 +4,4 @@ xrplbak.key
 *.bundle
 *.dump.json
 !examples/testnet-demo/*
+!cmd/xrplbak/testdata/recorded/*

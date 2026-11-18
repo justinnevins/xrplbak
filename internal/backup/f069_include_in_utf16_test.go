@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,7 @@ import (
 // F-069: an --include file saved as UTF-16 hid secret_key and a PEM
 // marker from the key material scan, because every other byte is zero.
 func TestF069IncludeKeyMaterialRefusedInUTF16(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	enc := func(s string, bigEndian bool) []byte {
 		b := []byte{0xff, 0xfe}

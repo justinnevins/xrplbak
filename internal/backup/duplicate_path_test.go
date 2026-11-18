@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 // with its content doubled. Every way of naming one file twice is refused,
 // including a spelling that only resolves to the same path.
 func TestSamePathNamedTwiceIsRefused(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	cfgPath := filepath.Join(e.dir, "xrpld.cfg")
 	valPath := filepath.Join(e.dir, "validators.txt")

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/justinnevins/xrplbak/internal/chunk"
@@ -435,7 +436,7 @@ func restoreDryRun(plan *restore.Plan) error {
 	hr("Dry run")
 	fmt.Fprintf(stdout, "  files written under %s\n", dir)
 	fmt.Fprintln(stdout, "  Inspect them. Then re-run with --write --target /etc/xrpld to place them.")
-	fmt.Fprintln(stdout, "  The files keep their backed-up mode. Owner and group are not restored.")
+	fmt.Fprintln(stdout, modeLine(runtime.GOOS))
 	return nil
 }
 
@@ -450,7 +451,7 @@ func restoreWrite(plan *restore.Plan, target string, force, yes bool) error {
 	}
 	hr("Written")
 	fmt.Fprintln(stdout, "  "+strings.Join(written, "\n  "))
-	fmt.Fprintln(stdout, ownerNote)
+	fmt.Fprintln(stdout, ownerNoteFor(runtime.GOOS))
 	return nil
 }
 
@@ -462,6 +463,30 @@ const ownerNote = `  owner:     a backup keeps each file's mode, not its owner o
              to the user who ran restore. Before starting xrpld, give the user it runs as
              read access (find it with: systemctl show -p User <service>). See
              docs/restore-ceremony.md step 9.`
+
+// ownerNoteWindows replaces ownerNote on Windows, which keeps no Unix
+// mode: a restore there is a drill, or a recovery whose files still have
+// to travel to the validator host.
+const ownerNoteWindows = `  modes:     Windows does not keep Unix file modes. After you copy these files to the
+             validator host, set each file's mode there. The list above shows them.
+  owner:     owner and group are not in a backup. Before starting xrpld, give the user it
+             runs as read access (find it with: systemctl show -p User <service>). See
+             docs/restore-ceremony.md step 9.`
+
+func ownerNoteFor(goos string) string {
+	if goos == "windows" {
+		return ownerNoteWindows
+	}
+	return ownerNote
+}
+
+// modeLine is the dry run's last line: what the written files carry.
+func modeLine(goos string) string {
+	if goos == "windows" {
+		return "  Windows does not keep Unix file modes: set them on the validator host. Owner and group are not restored."
+	}
+	return "  The files keep their backed-up mode. Owner and group are not restored."
+}
 
 // prefix returns the first n bytes of s, or all of s when it is shorter.
 // Manifest fields are authenticated but written by whoever holds the epoch

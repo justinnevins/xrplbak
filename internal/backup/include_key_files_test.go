@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"github.com/justinnevins/xrplbak/internal/testsupport/posix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 // covered, and a mutation pass could break the wallet.db, .pem and .key
 // checks with every test still passing.
 func TestIncludeKeyFileNamesRefused(t *testing.T) {
+	posix.Need(t)
 	e := newEnv(t)
 	harmless := []byte("# notes\nnothing secret here\n")
 	build := func(t *testing.T, name string) error {
