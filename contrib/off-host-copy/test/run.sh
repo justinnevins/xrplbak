@@ -28,7 +28,8 @@ printf '{"v":1,"b":true}\n' > "$SRC/$B.dump.json"
 cat > "$ROOT/bin/fake-client" <<FAKE
 #!/bin/sh
 frame() { echo XRPLBAK-EXPORT-BEGIN; base64 "\$1"; echo XRPLBAK-EXPORT-END; }
-sums() { (cd "\$1" && sha256sum [0-9a-f]*) > "\$1/SHA256SUMS"; }
+# Git Bash on Windows marks each name with "*"; xrplbak writes two spaces.
+sums() { (cd "\$1" && sha256sum [0-9a-f]* | sed 's/ \*/  /') > "\$1/SHA256SUMS"; }
 w=\$(mktemp -d)
 case "\${FAKE_MODE:-ok}" in
   ok)      exec "$XRPLBAK" export --out "$SRC" ;;
@@ -46,7 +47,7 @@ case "\${FAKE_MODE:-ok}" in
   missing) mkdir "\$w/d"; cp "$SRC/$A.bundle" "$SRC/$B.bundle" "\$w/d/"; sums "\$w/d"
            tar -czf "\$w/x.tgz" -C "\$w/d" $A.bundle SHA256SUMS; frame "\$w/x.tgz" ;;
   keyfile) mkdir "\$w/d"; cp "$SRC/$A.bundle" "\$w/d/"; echo secret > "\$w/d/xrplbak.key"
-           (cd "\$w/d" && sha256sum $A.bundle xrplbak.key > SHA256SUMS)
+           (cd "\$w/d" && sha256sum $A.bundle xrplbak.key | sed 's/ \*/  /' > SHA256SUMS)
            tar -czf "\$w/x.tgz" -C "\$w/d" $A.bundle xrplbak.key SHA256SUMS; frame "\$w/x.tgz" ;;
   nosums)  tar -czf "\$w/x.tgz" -C "$SRC" $A.bundle; frame "\$w/x.tgz" ;;
 esac
@@ -102,7 +103,7 @@ refused() {
 # PWSH names the PowerShell to test with: pwsh (PowerShell 7, the default)
 # or powershell (Windows PowerShell 5, on a Windows runner under Git Bash).
 PWSH=${PWSH:-pwsh}
-flavors=sh
+flavors="sh"
 if command -v "$PWSH" >/dev/null 2>&1; then
     flavors="sh pwsh pwsh-ssh"
 elif [ "${NEED_PWSH:-}" = 1 ]; then
