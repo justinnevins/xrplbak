@@ -20,8 +20,9 @@ func mustNotStay(t *testing.T, name, in, needle string, opt Options) {
 	t.Run(name, func(t *testing.T) {
 		res, err := Split(cfg.Parse(in), opt)
 		if err != nil {
-			// A refusal keeps it off the ledger too.
-			return
+			// A refusal keeps it off the ledger too, but these are
+			// lines to move, not to stop the backup for.
+			t.Fatalf("refused instead of moved: %v\n in: %q", err, in)
 		}
 		on := res.OnChain.Render()
 		if strings.Contains(on, needle) {

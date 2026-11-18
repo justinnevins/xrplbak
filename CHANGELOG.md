@@ -7,6 +7,12 @@
 - New: a Windows release binary, `xrplbak-windows-amd64.exe`, for a restore drill or a recovery from a Windows computer. The whole test suite now runs on Windows in CI. Backup stores POSIX paths and does not run on Windows; it says so.
 - Fix: two files in one backup whose names differ only by case are one file on Windows and on a default macOS volume. `restore` wrote the second over the first and listed both as written. It now asks the file system before each write and stops before it replaces anything. The fault was seen on Windows in CI. The same code is in the macOS binary of every earlier release.
 - Fix (Windows only, never released): the dry run's path under the temp folder was built as a network path; a name ending in a dot or a space was reported under a name Windows did not keep; the report said files keep their backed-up mode, which Windows cannot do. Those names, device names and names with a colon are refused on Windows, and the report says where to set modes.
+- Fix: five gaps in what stays on-chain, found by the weekly corpus run. None changed a restored byte; each let content stay in the on-chain copy that the rules say moves or is refused.
+  - A seed touching an underscore or a digit (`seed_s...`, `s..._old`, `1s...`) was not refused. The seed rule no longer depends on a word boundary.
+  - An internal host name with an underscore or a non-ASCII label (`my_host.internal`) stayed.
+  - A private address stayed when written as `fd00::`, `[fd12::]:51235`, `010.000.000.005` or `10.0.0.5_x`.
+  - A validator token pasted under `[validators]`, or commented out there with `--comments=onchain`, stayed, because key stanzas skip the base64 scanner. That exemption now covers keys only.
+  - With `--comments=onchain`, a credential commented out as `# # password = x`, `#- password = x` or `# rpc password = x` stayed.
 - Tests: a backup recorded once on Linux is verified and restored byte for byte on every platform, so a later change that breaks reading an older backup fails CI.
 
 ## v1.1.8 (2026-11-12)

@@ -131,7 +131,7 @@ var portSecretKeys = map[string]bool{
 }
 
 var (
-	reSeed    = regexp.MustCompile(`\bs[1-9A-HJ-NP-Za-km-z]{28,30}\b`)
+	reSeed    = regexp.MustCompile(`\A[1-9]?s[1-9A-HJ-NP-Za-km-z]{28,30}\z`)
 	reRFC1751 = regexp.MustCompile(`\b(?:[A-Z]{1,4} ){11}[A-Z]{1,4}\b`)
 	reHex     = regexp.MustCompile(`[0-9A-Fa-f]{64,}`)
 	reBase64  = regexp.MustCompile(`[A-Za-z0-9+/=]{44,}`)
@@ -341,9 +341,21 @@ func commentReason(stanza, comment string, opt Options) string {
 	if stanza == "" {
 		return ""
 	}
-	text := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(comment), "#"))
+	// Everything a person puts in front of a commented-out line comes
+	// off: "# # key", "#- key", "#; key". One "#" was not enough, and the
+	// second one became part of the key.
+	text := strings.TrimLeft(comment, "#;-*> \t")
+	text = strings.TrimSpace(text)
 	if why := valueReasonOpt(stanza, text, opt); why != "" {
 		return "comment where a setting would move: " + why
+	}
+	// "# rpc password = x": the key is the last word before the "=".
+	if i := strings.Index(text, "="); i >= 0 {
+		if f := strings.Fields(text[:i]); len(f) > 1 {
+			if why := valueReasonOpt(stanza, f[len(f)-1]+" "+text[i:], opt); why != "" {
+				return "comment where a setting would move: " + why
+			}
+		}
 	}
 	return ""
 }
@@ -367,7 +379,7 @@ func refuse(f *cfg.File) error {
 			continue
 		}
 		text := l.Raw
-		if !blobStanzas[l.Stanza] && (reSeed.MatchString(text) || reRFC1751.MatchString(text)) {
+		if !blobStanzas[l.Stanza] && (hasSeed(text) || reRFC1751.MatchString(text)) {
 			return &RefusedError{Stanza: l.Stanza, LineNo: l.No, Reason: "line looks like a seed or secret key"}
 		}
 		if strings.Contains(strings.ToLower(text), "-----begin") {
@@ -389,6 +401,35 @@ func refuse(f *cfg.File) error {
 		}
 	}
 	return nil
+}
+
+// hasSeed reports a seed anywhere in the line. A seed is s and 28 to 30
+// more base58 characters. The line is cut at every character that is not
+// base58, and a piece that is exactly a seed is one, whatever touches it:
+// "seed_s...", "s..._old" and "old=s..." all hold a seed. A word boundary
+// was the wrong test, because "_" and digits are word characters. One
+// digit in front is refused too ("1s..."): no key or address is a digit,
+// an s and a seed's length of base58. A longer base58 run that merely
+// contains an s, such as a 52-character node key, is not a seed.
+func hasSeed(line string) bool {
+	for _, piece := range strings.FieldsFunc(line, func(r rune) bool { return !isBase58(r) }) {
+		if reSeed.MatchString(piece) {
+			return true
+		}
+	}
+	return false
+}
+
+func isBase58(r rune) bool {
+	switch {
+	case r >= '1' && r <= '9':
+		return true
+	case r >= 'A' && r <= 'Z':
+		return r != 'I' && r != 'O'
+	case r >= 'a' && r <= 'z':
+		return r != 'l'
+	}
+	return false
 }
 
 // peerStanzas may go on-chain line by line when the operator opts in with
@@ -482,15 +523,13 @@ func lineReason(stanza, line string) string {
 		if reBase64.MatchString(line) {
 			return "long base64 value"
 		}
+	} else if notAKey(line) {
+		return "long base64 value"
 	}
 	if why := hostReason(stanza, key, line); why != "" {
 		return why
 	}
-	for _, m := range reIP.FindAllString(line, -1) {
-		ip := net.ParseIP(m)
-		if ip == nil {
-			continue
-		}
+	for _, ip := range addresses(line) {
 		if ip.IsLoopback() || ip.IsUnspecified() {
 			continue
 		}
@@ -502,6 +541,66 @@ func lineReason(stanza, line string) string {
 		}
 	}
 	return ""
+}
+
+// addresses returns every IP address written in the line. The pattern
+// reIP finds the common spellings. It ends at a word boundary, which
+// "fd00::" does not have and "10.0.0.5_x" hides, and ParseIP refuses
+// "010.000.000.005". So the line is also cut into runs of the characters
+// an address is made of, and each run is read as one.
+func addresses(line string) []net.IP {
+	var out []net.IP
+	add := func(s string) {
+		if ip := net.ParseIP(s); ip != nil {
+			out = append(out, ip)
+		}
+	}
+	for _, m := range reIP.FindAllString(line, -1) {
+		add(m)
+	}
+	// IPv4: digits and dots. Leading zeros come off each part first.
+	for _, run := range strings.FieldsFunc(line, func(r rune) bool { return (r < '0' || r > '9') && r != '.' }) {
+		parts := strings.Split(strings.Trim(run, "."), ".")
+		if len(parts) != 4 {
+			continue
+		}
+		for i, p := range parts {
+			if p = strings.TrimLeft(p, "0"); p == "" {
+				p = "0"
+			}
+			parts[i] = p
+		}
+		add(strings.Join(parts, "."))
+	}
+	// IPv6: hex digits, colons, and dots for a mapped IPv4 tail.
+	for _, run := range strings.FieldsFunc(line, func(r rune) bool {
+		return !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F' || r == ':' || r == '.')
+	}) {
+		if strings.Count(run, ":") >= 2 {
+			add(run)
+		}
+	}
+	return out
+}
+
+// maxKeyLen is the longest value a key stanza holds by right: a public
+// key in hex, 66 characters. A base58 node key is 52 and an amendment id
+// is 64.
+const maxKeyLen = 66
+
+// notAKey reports a base64 run in a key stanza that cannot be one of that
+// stanza's keys: it is longer than any of them, or it has "+", "/" or
+// "=", which hex and base58 never have. The key stanzas skip the hex and
+// base64 scanners because their own lines would trip them. Without this
+// bound the exemption also covered a validator token pasted or commented
+// out under [validators].
+func notAKey(line string) bool {
+	for _, run := range reBase64.FindAllString(line, -1) {
+		if len(run) > maxKeyLen || strings.ContainsAny(run, "+/=") {
+			return true
+		}
+	}
+	return false
 }
 
 // hostReason moves lines that name a host on the operator's own network.
@@ -517,6 +616,14 @@ func hostReason(stanza, key, line string) string {
 			return "internal hostname"
 		}
 	}
+	// The pattern above reads ASCII letters, digits and "-" only, so
+	// "my_host.internal" and a name with a non-ASCII label passed it.
+	// Every word of the line is read again as it is written.
+	for _, tok := range hostWords(line) {
+		if specialUse(tok) {
+			return "internal hostname"
+		}
+	}
 	if !hostValueStanzas[stanza] && !(strings.HasPrefix(stanza, "port_") && key == "ip") {
 		return ""
 	}
@@ -528,6 +635,34 @@ func hostReason(stanza, key, line string) string {
 		return ""
 	}
 	return "bare hostname with no public domain"
+}
+
+// hostWords cuts a line into the words that could be host names: split at
+// space and at the punctuation that separates values, then without a
+// scheme, a path, a port or a final dot, in lower case.
+func hostWords(line string) []string {
+	var out []string
+	for _, w := range strings.FieldsFunc(line, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(`,;="'()<>[]{}|`, r)
+	}) {
+		if i := strings.Index(w, "://"); i >= 0 {
+			w = w[i+3:]
+		}
+		if i := strings.IndexAny(w, "/?#@"); i >= 0 {
+			if w[i] == '@' {
+				w = w[i+1:]
+			} else {
+				w = w[:i]
+			}
+		}
+		if i := strings.LastIndex(w, ":"); i >= 0 {
+			w = w[:i]
+		}
+		if w = strings.TrimSuffix(strings.ToLower(w), "."); w != "" {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 // specialUse reports whether a lowercased dotted name ends in a suffix
