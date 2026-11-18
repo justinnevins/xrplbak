@@ -46,6 +46,26 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test ./...
+      # The laptop pull script under Windows PowerShell 5, the PowerShell
+      # every Windows has, against a fake plink.
+      - run: go build -o xrplbak.exe ./cmd/xrplbak
+      - run: PWSH=powershell NEED_PWSH=1 sh contrib/off-host-copy/test/run.sh ./xrplbak.exe
+        shell: bash
+
+  # The optional laptop scripts in contrib/off-host-copy, against a fake
+  # ssh and a fake plink that run a real "xrplbak export".
+  pull-kit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go build -o bin/xrplbak ./cmd/xrplbak
+      - run: shellcheck contrib/off-host-copy/pull-xrplbak-backup.sh contrib/off-host-copy/test/run.sh
+      - run: NEED_PWSH=1 sh contrib/off-host-copy/test/run.sh bin/xrplbak
 
   # Short fuzz smoke on every push. The targets carry a committed corpus, so
   # this replays every counterexample found so far and then explores briefly.
