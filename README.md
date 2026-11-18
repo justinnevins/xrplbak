@@ -200,7 +200,7 @@ The source at a tagged commit is the root of trust. Binaries are a convenience.
 ```
 git clone https://github.com/justinnevins/xrplbak
 cd xrplbak
-git checkout v1.1.8
+git checkout v1.1.9
 make build
 sha256sum bin/*
 ```
