@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -43,7 +44,7 @@ func exportDir(t *testing.T, files map[string]string) string {
 // unframe is the laptop side written out by hand: find the two marker
 // lines, decode what is between them, unpack it. It shares no code with
 // the export, so it checks the format and not the helper that wrote it.
-func unframe(t *testing.T, out string) map[string][]byte {
+func unframe(t *testing.T, out string) (map[string][]byte, map[string]time.Time) {
 	t.Helper()
 	const begin, end = "XRPLBAK-EXPORT-BEGIN\n", "XRPLBAK-EXPORT-END\n"
 	if !strings.HasPrefix(out, begin) {
@@ -58,7 +59,7 @@ func unframe(t *testing.T, out string) map[string][]byte {
 	zr, err := gzip.NewReader(bytes.NewReader(raw))
 	must(t, err)
 	tr := tar.NewReader(zr)
-	got := map[string][]byte{}
+	got, mod := map[string][]byte{}, map[string]time.Time{}
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
@@ -68,6 +69,9 @@ func unframe(t *testing.T, out string) map[string][]byte {
 		if h.Typeflag != tar.TypeReg {
 			t.Fatalf("archive entry %q is not a regular file (type %q)", h.Name, h.Typeflag)
 		}
+		if h.Mode != 0o600 {
+			t.Fatalf("archive entry %q has mode %o, want 600: the bundle is owner-only on the host", h.Name, h.Mode)
+		}
 		if h.Name != filepath.Base(h.Name) || strings.ContainsAny(h.Name, `/\`) {
 			t.Fatalf("archive entry %q carries a path", h.Name)
 		}
@@ -76,9 +80,9 @@ func unframe(t *testing.T, out string) map[string][]byte {
 		}
 		body, err := io.ReadAll(tr)
 		must(t, err)
-		got[h.Name] = body
+		got[h.Name], mod[h.Name] = body, h.ModTime
 	}
-	return got
+	return got, mod
 }
 
 // Every backup file comes out byte for byte, with a SHA256SUMS file the
@@ -90,11 +94,31 @@ func TestExportRoundTrip(t *testing.T) {
 		exportIDb + ".bundle":    "a dry run leaves a bundle with no dump",
 	}
 	dir := exportDir(t, files)
+	// Each copy keeps the time of its file, so the laptop shows when a
+	// backup was made, and the newest of them dates the checksum list.
+	when := map[string]time.Time{}
+	var newest time.Time
+	for name := range files {
+		newest = time.Date(2026, 3, 4, 5, 6, len(name), 0, time.UTC)
+		when[name] = newest
+		must(t, os.Chtimes(filepath.Join(dir, name), newest, newest))
+	}
+	for _, at := range when {
+		if at.After(newest) {
+			newest = at
+		}
+	}
+	when["SHA256SUMS"] = newest
 	code, out, errOut := exportRun("--out", dir)
 	if code != exitOK {
 		t.Fatalf("exit %d, want 0\nstderr: %s", code, errOut)
 	}
-	got := unframe(t, out)
+	got, mod := unframe(t, out)
+	for name, at := range when {
+		if !mod[name].Equal(at) {
+			t.Errorf("%s: archive time %s, want the file's %s", name, mod[name].UTC(), at)
+		}
+	}
 	sums, ok := got["SHA256SUMS"]
 	if !ok {
 		t.Fatal("archive has no SHA256SUMS")
@@ -167,8 +191,8 @@ func TestExportRefusesASymlink(t *testing.T) {
 		if out != "" {
 			t.Errorf("%s: wrote to stdout:\n%.200s", link, out)
 		}
-		if !strings.Contains(errOut, link) {
-			t.Errorf("%s: stderr does not name the symlink: %s", link, errOut)
+		if !strings.Contains(errOut, link+": a symlink") {
+			t.Errorf("%s: stderr does not name the symlink as one: %s", link, errOut)
 		}
 	}
 	// The folder itself may not be a symlink either: the rule names a
@@ -218,6 +242,11 @@ func TestExportRefusesForeignNames(t *testing.T) {
 		if strings.Contains(out+errOut, secret) {
 			t.Errorf("%s: the file's content was printed", name)
 		}
+		// A backup that died mid-write leaves a .tmp file. The operator
+		// needs to hear that, not "not a backup file".
+		if strings.HasSuffix(name, ".tmp") && !strings.Contains(errOut, "interrupted backup") {
+			t.Errorf("%s: stderr does not say an interrupted backup left it: %s", name, errOut)
+		}
 	}
 }
 
@@ -231,6 +260,9 @@ func TestExportRefusesNonFiles(t *testing.T) {
 	code, out, errOut := exportRun("--out", dir)
 	if code != exitRefused || out != "" {
 		t.Errorf("exit %d, stdout %d bytes, want exit %d and nothing\nstderr: %s", code, len(out), exitRefused, errOut)
+	}
+	if !strings.Contains(errOut, exportIDb+".bundle: not a regular file") {
+		t.Errorf("stderr does not say the entry is not a regular file: %s", errOut)
 	}
 	plain := exportDir(t, map[string]string{exportIDa + ".bundle": "real"})
 	must(t, os.Mkdir(filepath.Join(plain, "old"), 0o700))
