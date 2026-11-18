@@ -63,6 +63,8 @@ Back up again after you change the config. Validator configs change rarely, so a
 xrplbak backup --submit           # then copy the two files it names off the host
 ```
 
+The copy is one step from your own computer: `xrplbak export` prints both files as one checked archive, and a short script fetches and checks it. See [docs/off-host-copies.md](docs/off-host-copies.md).
+
 With a saved server, a dry run reads the account from that server to plan the next sequence; it still sends no transaction. The settings file is refused when group or others can write it. The file is signed with a key from your key file. An on-chain choice in it is taken as already confirmed only when the signature checks, so after a hand edit the next backup asks for the phrase again.
 
 ## Usage
@@ -78,6 +80,7 @@ xrplbak verify --dump xrplbak-out/<id>.dump.json
 xrplbak restore --rpc mainnet --bundle xrplbak-out/<id>.bundle          # to a temp dir
 xrplbak restore --dump <dump> --bundle <bundle> --write --target /etc/xrpld
 xrplbak restore --rpc mainnet --account <address> --words-file words.txt  # fresh host: no key file
+xrplbak export --out xrplbak-out          # every bundle and dump as one archive, to copy off the host
 xrplbak attest-key --validator-key <nHB...>             # once: key for public attestations
 xrplbak backup --submit --rpc mainnet --attest          # attest this backup publicly
 xrplbak attest-verify --rpc mainnet --account <address>  # anyone: check an attestation
@@ -208,6 +211,8 @@ Build from a git clone with the tag checked out, not from a source zip. Go stamp
 
 To use a published binary instead, check it against the release checksums first. If a hash does not match, do not use the binary.
 
+Releases carry three binaries: `xrplbak-linux-amd64`, `xrplbak-darwin-arm64` and `xrplbak-windows-amd64.exe`. The Windows binary is for a restore drill or a recovery from a Windows computer: it restores, verifies and checks attestations. Backup reads the config on the validator host and does not run on Windows. Windows keeps no Unix file modes, so set them on the validator host after you copy restored files there.
+
 ```
 sha256sum -c SHA256SUMS
 ```
@@ -227,9 +232,9 @@ Scripts branch on the code. People read the message.
 | 0 | done |
 | 1 | usage: bad flags, unreadable input file, or the operator cancelled at a prompt. `backup --submit` and `restore --write` ask before acting; pass `--yes` to answer up front in a script |
 | 2 | network: the XRPL server could not be read |
-| 3 | refused: the input holds something the tool will not handle (a seed, PEM material, a restore marker, an unsafe path in a backup) |
+| 3 | refused: the input holds something the tool will not handle (a seed, PEM material, a restore marker, an unsafe path in a backup), or `export` found something in the folder that is not a backup file |
 | 4 | authentication: nothing authenticates with this key, a chunk, manifest, bundle, or share fails its check, or two different backups claim the same seq |
-| 5 | incomplete: a chunk is missing from the searched history, the anchor names a backup that history does not hold, the newest backup is a tombstone, or `attest-verify` found no attestation. A restore that is only missing bundle content is PARTIAL, not incomplete, and exits 0 |
+| 5 | incomplete: a chunk is missing from the searched history, the anchor names a backup that history does not hold, the newest backup is a tombstone, `attest-verify` found no attestation, or `export` found no backup files. A restore that is only missing bundle content is PARTIAL, not incomplete, and exits 0 |
 | 6 | write: `--write` refused (file exists, two files share a name, target under /var/lib) or failed |
 
 When two different backups authenticate at the same epoch and seq, verify and restore refuse to pick one. Name the backup with `--backup-id <hex prefix>` after checking who else holds the writer key.
