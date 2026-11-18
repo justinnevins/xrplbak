@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.1.9 (2026-11-17)
 
 - New: `xrplbak export --out DIR` prints every bundle and dump file in a folder as one archive on stdout, with a SHA256SUMS file inside, as base64 text between a BEGIN and an END line. It only reads. One sudo rule can name the command with fixed arguments, so a login user can copy the files out of a root-only folder without a root shell. A symlink, or any name that is not a backup file, refuses the whole folder (exit 3) and nothing is printed. An empty or missing folder is exit 5.
 - New: optional laptop scripts in `contrib/off-host-copy` (PowerShell for Windows, sh for macOS and Linux). One run fetches the export over SSH, checks every file against the validator's SHA-256 sums, copies to one or two folders, and never overwrites. They are outside the binary and its checksums. Setup: `docs/off-host-copies.md`. `backup --submit` ends with a line that names that page.
