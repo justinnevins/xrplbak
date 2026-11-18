@@ -631,6 +631,7 @@ func printDone(p *backup.Plan, out, dumpPath, source, rpcArg, keyPath string, wr
 		}
 		fmt.Fprintf(stdout, "    %s  %s\n", sha256hex(raw), abs)
 	}
+	fmt.Fprintln(stdout, "  one step from your own computer, copy and check: docs/off-host-copies.md (xrplbak export)")
 	return tip, nil
 }
 

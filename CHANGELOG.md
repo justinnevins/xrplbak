@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- New: `xrplbak export --out DIR` prints every bundle and dump file in a folder as one archive on stdout, with a SHA256SUMS file inside, as base64 text between a BEGIN and an END line. It only reads. One sudo rule can name the command with fixed arguments, so a login user can copy the files out of a root-only folder without a root shell. A symlink, or any name that is not a backup file, refuses the whole folder (exit 3) and nothing is printed. An empty or missing folder is exit 5.
+- New: optional laptop scripts in `contrib/off-host-copy` (PowerShell for Windows, sh for macOS and Linux). One run fetches the export over SSH, checks every file against the validator's SHA-256 sums, copies to one or two folders, and never overwrites. They are outside the binary and its checksums. Setup: `docs/off-host-copies.md`. `backup --submit` ends with a line that names that page.
+- New: a Windows release binary, `xrplbak-windows-amd64.exe`, for a restore drill or a recovery from a Windows computer. The whole test suite now runs on Windows in CI. Backup stores POSIX paths and does not run on Windows; it says so.
+- Fix: two files in one backup whose names differ only by case are one file on Windows and on a default macOS volume. `restore` wrote the second over the first and listed both as written. It now asks the file system before each write and stops before it replaces anything. The fault was seen on Windows in CI. The same code is in the macOS binary of every earlier release.
+- Fix (Windows only, never released): the dry run's path under the temp folder was built as a network path; a name ending in a dot or a space was reported under a name Windows did not keep; the report said files keep their backed-up mode, which Windows cannot do. Those names, device names and names with a colon are refused on Windows, and the report says where to set modes.
+- Tests: a backup recorded once on Linux is verified and restored byte for byte on every platform, so a later change that breaks reading an older backup fails CI.
+
 ## v1.1.8 (2026-11-12)
 
 - Fix: `xrplbak.settings` could turn `--comments=onchain` or `--peers=onchain` on without the typed phrase. Anyone who could write the key file's directory could write the file, without reading the key. `--save` now signs the file with a key derived from the key file. An on-chain choice is taken as already confirmed only from a file whose signature checks. A hand-edited file, or one saved by v1.1.7, asks for the phrase once; saving again with `--save` signs it. The key file is now read before the on-chain questions.
