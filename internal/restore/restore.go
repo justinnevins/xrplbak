@@ -306,8 +306,32 @@ func hostKeeps(rel string) error {
 		if strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ") {
 			return bad("Windows drops a final dot or space")
 		}
+		if windowsDevice(part) {
+			return bad("a device name on some versions of Windows")
+		}
 	}
 	return nil
+}
+
+// windowsDevice reports a name that Windows, in some version, opens as a
+// device whatever its extension: NUL, nul.cfg, COM1.txt. Windows 11 stores
+// nul.cfg as a file and Windows 10 does not, and filepath.IsLocal follows
+// the newer rule. A restore cannot know which one it is on, so the name
+// is refused on both.
+func windowsDevice(part string) bool {
+	stem, _, _ := strings.Cut(part, ".")
+	stem = strings.ToUpper(strings.TrimRight(stem, " "))
+	switch stem {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		return true
+	}
+	if len(stem) >= 4 && (stem[:3] == "COM" || stem[:3] == "LPT") {
+		switch stem[3:] {
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9", "\u00b9", "\u00b2", "\u00b3":
+			return true
+		}
+	}
+	return false
 }
 
 // placed remembers the files one restore has written, as the file system

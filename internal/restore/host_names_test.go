@@ -131,3 +131,18 @@ func TestWindowsRefusesNamesItWouldNotKeep(t *testing.T) {
 		}
 	}
 }
+
+// The device-name rule is plain string work, so it is checked here on
+// every platform, apart from the Windows run that uses it.
+func TestWindowsDeviceNames(t *testing.T) {
+	for name, want := range map[string]bool{
+		"NUL": true, "nul": true, "nul.cfg": true, "Nul .txt": true, "CON": true, "con.tar.gz": true,
+		"PRN": true, "AUX": true, "COM1": true, "com9.cfg": true, "LPT1": true, "lpt\u00b2": true, "CONIN$": true,
+		"xrpld.cfg": false, "null.cfg": false, "COM": false, "COM0": false, "COM10": false, "console.cfg": false,
+		"a.nul": false, "validators.txt": false, "LPT": false, "": false,
+	} {
+		if got := windowsDevice(name); got != want {
+			t.Errorf("windowsDevice(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
