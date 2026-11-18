@@ -97,6 +97,9 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, erro
 		}
 	}
 	byPath := map[string]*File{}
+	// v1 holds, for a file merged from both parts, the same merge done the
+	// way xrplbak v1.0 did it. It is used only if it matches the hash.
+	v1 := map[string][]byte{}
 	bundleByPath := map[string]container.Entry{}
 	for _, e := range bundle {
 		bundleByPath[e.Path] = e
@@ -107,6 +110,7 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, erro
 		if b, ok := bundleByPath[e.Path]; ok {
 			f.Data = []byte(redact.Merge(on, cfg.Parse(string(b.Data))).Render())
 			f.Source = "onchain+bundle"
+			v1[e.Path] = []byte(redact.MergeV1(string(e.Data), string(b.Data)))
 			delete(bundleByPath, e.Path)
 		} else {
 			f.Data = []byte(redact.Merge(on, &cfg.File{}).Render())
@@ -127,6 +131,16 @@ func Build(m *manifest.Manifest, onchain, bundle []container.Entry) (*Plan, erro
 			continue
 		}
 		f.proof = checkComplete(f.Data, mf.SHA256)
+		// A backup written by v1.0 does not rebuild line by line. The
+		// manifest hash decides which reading is the backed-up file:
+		// the v1.0 one replaces the current one only when it, and not
+		// the current one, is the bytes the hash names.
+		if old, ok := v1[mf.Path]; ok && !f.proof.proven {
+			if proof := checkComplete(old, mf.SHA256); proof.proven {
+				f.Data, f.proof = old, proof
+				f.Source = "onchain+bundle, v1.0 format: stanzas sorted, comments not kept"
+			}
+		}
 		p.Files = append(p.Files, *f)
 		delete(byPath, mf.Path)
 	}

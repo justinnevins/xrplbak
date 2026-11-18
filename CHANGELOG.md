@@ -13,6 +13,7 @@
   - A private address stayed when written as `fd00::`, `[fd12::]:51235`, `010.000.000.005` or `10.0.0.5_x`.
   - A validator token pasted under `[validators]`, or commented out there with `--comments=onchain`, stayed, because key stanzas skip the base64 scanner. That exemption now covers keys only.
   - With `--comments=onchain`, a credential commented out as `# # password = x`, `#- password = x` or `# rpc password = x` stayed.
+- Fix: a backup written by v1.0.0 restores again. From v1.1.0 on, `restore` put its bundle lines in the wrong stanzas and called the file PARTIAL with the bundle supplied, and `verify` (since v1.1.7) exited 5. The demo in `examples/testnet-demo` is such a backup, so the README's first commands failed. Restore now also rebuilds the file the v1.0 way and uses that reading only when it matches the manifest hash. The report marks such a file "v1.0 format": stanzas sorted, comments not kept, which is what v1.0 backed up.
 - Tests: a backup recorded once on Linux is verified and restored byte for byte on every platform, so a later change that breaks reading an older backup fails CI.
 
 ## v1.1.8 (2026-11-12)
