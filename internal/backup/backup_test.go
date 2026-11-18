@@ -34,6 +34,7 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	posix.Need(t)
 	var root crypto.RootKey
 	for i := range root {
 		root[i] = byte(i * 3)

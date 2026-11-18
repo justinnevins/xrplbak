@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -257,16 +258,91 @@ func (p *Plan) WriteTemp() (string, error) {
 		}
 		rels[i] = rel
 	}
+	for _, rel := range rels {
+		if err := hostKeeps(rel); err != nil {
+			return "", err
+		}
+	}
 	dir, err := os.MkdirTemp("", "xrplbak-restore-")
 	if err != nil {
 		return "", err
 	}
+	var done placed
 	for i, f := range p.Files {
-		if err := writeFile(filepath.Join(dir, rels[i]), f); err != nil {
+		dst := filepath.Join(dir, rels[i])
+		err := done.clash(dst, f.Path)
+		if err == nil {
+			err = writeFile(dst, f)
+		}
+		if err == nil {
+			err = done.add(dst, f.Path)
+		}
+		if err != nil {
+			// A partial dry run is not something to inspect.
+			os.RemoveAll(dir)
 			return "", err
 		}
 	}
 	return dir, nil
+}
+
+// hostKeeps reports why this machine would not store a file under exactly
+// the name rel. Linux keeps any name checkPath accepts. Windows does not:
+// NUL and COM1 are devices, a colon opens a named stream inside another
+// file, and a final dot or space is dropped without a word. Writing such
+// a name there "succeeds" and leaves something else on disk, so it is
+// refused before anything is written.
+func hostKeeps(rel string) error {
+	bad := func(why string) error {
+		return fmt.Errorf("refused: this system cannot store the file name %q (%s); restore on Linux or macOS", rel, why)
+	}
+	if !filepath.IsLocal(rel) {
+		return bad("a device name, or a name with a colon")
+	}
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ") {
+			return bad("Windows drops a final dot or space")
+		}
+	}
+	return nil
+}
+
+// placed remembers the files one restore has written, as the file system
+// identifies them. Two names a Linux host keeps apart, a.cfg and A.cfg,
+// are one file on Windows and on a default macOS volume. Asking the file
+// system is the only test that is right for every volume: no table of
+// case rules is.
+type placed struct {
+	infos []os.FileInfo
+	paths []string
+}
+
+// clash returns an error when dst is a file this restore already wrote
+// for another path. It is called before the write, so the earlier file
+// keeps its bytes.
+func (w *placed) clash(dst, path string) error {
+	st, err := os.Lstat(dst)
+	if err != nil {
+		return nil
+	}
+	for i, in := range w.infos {
+		if os.SameFile(in, st) {
+			return fmt.Errorf("%s and %s are the same file on this file system (their names differ only by case); %s was not written. Restore on a case-sensitive file system", w.paths[i], path, path)
+		}
+	}
+	return nil
+}
+
+func (w *placed) add(dst, path string) error {
+	st, err := os.Lstat(dst)
+	if err != nil {
+		return err
+	}
+	w.infos, w.paths = append(w.infos, st), append(w.paths, path)
+	return nil
 }
 
 // WriteTarget writes files under targetDir keeping their basenames. It
@@ -290,6 +366,9 @@ func (p *Plan) WriteTarget(targetDir string, force bool) ([]string, error) {
 			return nil, fmt.Errorf("%s and %s would land on the same name %s in %s; restore them by hand from the dry-run directory", first, f.Path, base, abs)
 		}
 		seen[base] = f.Path
+		if err := hostKeeps(base); err != nil {
+			return nil, err
+		}
 		dst := filepath.Join(abs, base)
 		st, err := os.Lstat(dst)
 		if err != nil {
@@ -308,9 +387,16 @@ func (p *Plan) WriteTarget(targetDir string, force bool) ([]string, error) {
 			return written, fmt.Errorf("%s exists; pass --force to overwrite", dst)
 		}
 	}
+	var done placed
 	for _, f := range p.Files {
 		dst := filepath.Join(abs, filepath.Base(f.Path))
+		if err := done.clash(dst, f.Path); err != nil {
+			return written, err
+		}
 		if err := writeFile(dst, f); err != nil {
+			return written, err
+		}
+		if err := done.add(dst, f.Path); err != nil {
 			return written, err
 		}
 		written = append(written, dst)
@@ -327,7 +413,10 @@ func safeRelative(p string) (string, error) {
 			return "", fmt.Errorf("refusing unsafe path %q in backup", p)
 		}
 	}
-	clean := filepath.Clean("/" + filepath.ToSlash(p))
+	// path, not filepath: the stored path is POSIX on every platform. On
+	// Windows filepath.Clean turns the leading "//" this builds into the
+	// start of a network path, and the result was absolute.
+	clean := path.Clean("/" + filepath.ToSlash(p))
 	rel := strings.TrimPrefix(clean, "/")
 	// The test is on path components, not on a string prefix: a file
 	// legitimately named "..0" or "..config" begins with two dots without

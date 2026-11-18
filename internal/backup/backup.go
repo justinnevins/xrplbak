@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -317,6 +318,9 @@ func readFile(path string) ([]byte, uint32, string, error) {
 	// anything is sent. The name is quoted: it must not reach the terminal
 	// raw.
 	if err := restore.CheckPath(path); err != nil {
+		if runtime.GOOS == "windows" {
+			return nil, 0, "", fmt.Errorf("backup does not run on Windows: it reads the config on the validator host and stores POSIX paths, and %q is not one. Run backup on the host. The Windows build restores, verifies and checks attestations", path)
+		}
 		return nil, 0, "", fmt.Errorf("%q cannot be backed up: its name holds a control or invisible character, or is not a clean absolute path, and restore would refuse it. Rename the file", path)
 	}
 	b, err := os.ReadFile(path)

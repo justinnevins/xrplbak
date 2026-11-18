@@ -188,3 +188,19 @@ func TestRestoreSaysWhatHappensToModes(t *testing.T) {
 		}
 	}
 }
+
+// The Windows wording is picked by platform name, so it can be read here
+// on any platform: it must not promise what Windows cannot do.
+func TestWindowsNotesDoNotPromiseModes(t *testing.T) {
+	for _, note := range []string{modeLine("windows"), ownerNoteFor("windows")} {
+		if strings.Contains(note, "keep their backed-up mode") || strings.Contains(note, "keeps each file's mode") {
+			t.Errorf("the Windows note says modes are kept:\n%s", note)
+		}
+		if !strings.Contains(note, "Windows does not keep Unix file modes") {
+			t.Errorf("the Windows note does not say modes are not kept:\n%s", note)
+		}
+	}
+	if modeLine("linux") == modeLine("windows") || ownerNoteFor("linux") != ownerNote {
+		t.Error("the Linux notes changed")
+	}
+}
