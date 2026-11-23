@@ -32,9 +32,29 @@ func cmdInit(args []string) error {
 		return parseError(err)
 	}
 
+	// A flag this run would not use is refused, never dropped: the operator
+	// who asked for it must not get something else without a word (F-109).
+	if *shares < 0 {
+		return fail(exitUsage, "--shares must be 2 or more, or left out for 24 words; got %d", *shares)
+	}
+	if *threshold < 0 {
+		return fail(exitUsage, "--threshold must be 2 or more, or left out; got %d", *threshold)
+	}
 	keyPath := filepath.Join(*out, "xrplbak.key")
 	if *rotate {
+		if *shares != 0 {
+			return fail(exitUsage, "--shares does not apply with --rotate: a rotation keeps the same recovery key and prints no new shares. Drop --shares")
+		}
+		if *threshold != 0 {
+			return fail(exitUsage, "--threshold does not apply with --rotate: a rotation keeps the same recovery key and prints no new shares. Drop --threshold")
+		}
 		return doRotate(keyPath, *wordsFile, *sharesFile, *passphrase)
+	}
+	if *wordsFile != "" {
+		return fail(exitUsage, "--words-file only means something with --rotate. A new key gets new recovery words; drop --words-file, or add --rotate")
+	}
+	if *sharesFile != "" {
+		return fail(exitUsage, "--shares-file only means something with --rotate. A new key gets a new recovery key; drop --shares-file, or add --rotate")
 	}
 	if _, err := os.Stat(keyPath); err == nil {
 		return fail(exitWrite, "%s already exists. Move it away first; init never overwrites a key file", keyPath)

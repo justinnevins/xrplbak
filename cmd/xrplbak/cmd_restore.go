@@ -102,6 +102,17 @@ func warnStaleEpoch(res *discover.Result, hit *discover.Candidate) {
 	}
 }
 
+// firstSet takes value, flag name pairs and returns the name of the first
+// flag whose value is set, or "".
+func firstSet(pairs ...string) string {
+	for i := 0; i+1 < len(pairs); i += 2 {
+		if pairs[i] != "" {
+			return pairs[i+1]
+		}
+	}
+	return ""
+}
+
 type source struct {
 	client  xrpl.Client
 	name    string
@@ -113,6 +124,19 @@ type source struct {
 // resolve turns flags into a client, an account, and keys. A key file is
 // used when one is found or named; otherwise the recovery key is asked for.
 func (sf *sourceFlags) resolve() (*source, error) {
+	// Two recovery sources is a usage error. The key file flags used to be
+	// skipped in silence beside the recovery key flags (F-110).
+	if recovery := firstSet(*sf.wordsFile, "--words-file", *sf.sharesFile, "--shares-file"); recovery != "" {
+		keyFlag := ""
+		if *sf.key != "" {
+			keyFlag = "--key"
+		} else if *sf.keyPass {
+			keyFlag = "--key-passphrase"
+		}
+		if keyFlag != "" {
+			return nil, fail(exitUsage, "pass either a key file (--key, --key-passphrase) or the recovery key (--words-file, --shares-file), not both; got %s with %s", keyFlag, recovery)
+		}
+	}
 	c, name, err := openClient(*sf.rpcURL, *sf.dumpPath)
 	if err != nil {
 		return nil, err
@@ -123,6 +147,12 @@ func (sf *sourceFlags) resolve() (*source, error) {
 		if kerr == nil {
 			kf, lerr := loadKeyFile(kp, *sf.keyPass)
 			if lerr != nil {
+				if *sf.key == "" {
+					// Nobody named this file. xrplbak does not switch to the
+					// recovery key on its own, so say where the file came from
+					// and how to get past it (F-111).
+					return nil, fail(exitCode(lerr), "%v\n  This key file was found in the working directory; it was not named with --key. To use the recovery words instead, pass --words-file FILE (or --shares-file FILE), or run from a directory that has no xrplbak.key", lerr)
+				}
 				return nil, lerr
 			}
 			s.keys = discover.FileKeys{E: kf.Epoch, Key: kf.Key}

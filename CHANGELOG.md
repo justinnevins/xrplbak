@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Fix: a recovery share typed in lower case was refused when it held `o`, `i` or `l`. Upper-case `O`, `I` and `L` were already read as zero and one; the lower-case letters now are too.
+- Fix: `init` no longer drops a flag it will not use. `--shares` or `--threshold` below zero, `--words-file` or `--shares-file` without `--rotate`, and `--shares` or `--threshold` with `--rotate` each stop with a usage error. Before, `init --shares -3` wrote a 24-word key and said nothing.
+- Fix: `restore` and `verify` refuse `--key` or `--key-passphrase` together with `--words-file` or `--shares-file`. Before, the key file flags were skipped in silence, even for a path that did not exist.
+- Fix: when an `xrplbak.key` found in the working directory cannot be opened, the error now says the file was found there and names the way to the recovery words: `--words-file FILE`, or a directory with no `xrplbak.key`. Before, the message said to restore with the recovery words, and the next run picked up the same file.
+
 ## v1.1.9 (2026-11-17)
 
 - New: `xrplbak export --out DIR` prints every bundle and dump file in a folder as one archive on stdout, with a SHA256SUMS file inside, as base64 text between a BEGIN and an END line. It only reads. One sudo rule can name the command with fixed arguments, so a login user can copy the files out of a root-only folder without a root shell. A symlink, or any name that is not a backup file, refuses the whole folder (exit 3) and nothing is printed. An empty or missing folder is exit 5.
