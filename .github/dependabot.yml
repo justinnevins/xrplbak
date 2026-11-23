@@ -7,3 +7,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # The CodeQL steps (init, analyze, upload-sarif) must run the same
+    # version. One pull request for all of them; apart, the analyze bump
+    # alone fails the codeql check.
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action/*"
