@@ -96,7 +96,8 @@ func encodeShare(threshold byte, splitID [2]byte, s []byte) string {
 // Exported so init's re-entry check applies exactly these rules. A second
 // copy would drift from this one.
 func NormalizeShare(s string) string {
-	return strings.ToUpper(strings.NewReplacer("-", "", " ", "", "O", "0", "I", "1", "L", "1").Replace(strings.TrimSpace(s)))
+	// Upper-case first, so the fold below sees o, i and l as well (F-108).
+	return strings.NewReplacer("-", "", " ", "", "O", "0", "I", "1", "L", "1").Replace(strings.ToUpper(strings.TrimSpace(s)))
 }
 
 func decodeShare(s string) (threshold byte, splitID [2]byte, share []byte, err error) {
